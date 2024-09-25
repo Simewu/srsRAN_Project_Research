@@ -23,36 +23,39 @@
 #include "ngap_test_helpers.h"
 #include "tests/unittests/ngap/test_helpers.h"
 #include "srsran/asn1/ngap/ngap_pdu_contents.h"
+#include "srsran/cu_cp/cu_cp_configuration_helpers.h"
 #include "srsran/ran/cu_types.h"
 #include "srsran/ran/lcid.h"
 #include "srsran/support/async/async_test_utils.h"
 #include "srsran/support/test_utils.h"
 #include <chrono>
-#include <memory>
 
 using namespace srsran;
 using namespace srs_cu_cp;
 
-ngap_test::ngap_test() : ngap_ue_task_scheduler(timers, ctrl_worker)
+ngap_test::ngap_test() :
+  cu_cp_cfg([this]() {
+    cu_cp_configuration cucfg     = config_helpers::make_default_cu_cp_config();
+    cucfg.services.timers         = &timers;
+    cucfg.services.cu_cp_executor = &ctrl_worker;
+    return cucfg;
+  }())
 {
   test_logger.set_level(srslog::basic_levels::debug);
   ngap_logger.set_level(srslog::basic_levels::debug);
   srslog::init();
 
-  cfg.gnb_id        = 411;
-  cfg.ran_node_name = "srsgnb01";
-  cfg.plmn          = "00101";
-  cfg.tac           = 7;
-  s_nssai_t slice_cfg;
-  slice_cfg.sst = 1;
-  cfg.slice_configurations.push_back(slice_cfg);
-  cfg.ue_context_setup_timeout = std::chrono::seconds(2);
+  ngap_configuration ngap_cfg{};
+  ngap_cfg.gnb_id                    = cu_cp_cfg.node.gnb_id;
+  ngap_cfg.ran_node_name             = cu_cp_cfg.node.ran_node_name;
+  ngap_cfg.supported_tas             = cu_cp_cfg.node.supported_tas;
+  ngap_cfg.pdu_session_setup_timeout = cu_cp_cfg.ue.pdu_session_setup_timeout;
+  ngap                               = create_ngap(ngap_cfg, cu_cp_notifier, n2_gw, timers, ctrl_worker);
 
-  ngap = create_ngap(
-      cfg, ngap_ue_creation_notifier, cu_cp_paging_notifier, ngap_ue_task_scheduler, ue_mng, msg_notifier, ctrl_worker);
+  cu_cp_notifier.connect_ngap(ngap->get_ngap_ue_context_removal_handler());
 
-  du_processor_notifier =
-      std::make_unique<dummy_ngap_du_processor_notifier>(ngap->get_ngap_ue_context_removal_handler());
+  // Initiate N2 TNL association to AMF.
+  report_fatal_error_if_not(ngap->handle_amf_tnl_connection_request(), "Unable to establish connection to AMF");
 }
 
 ngap_test::~ngap_test()
@@ -64,10 +67,10 @@ ngap_test::~ngap_test()
 ue_index_t ngap_test::create_ue(rnti_t rnti)
 {
   // Create UE in UE manager
-  ue_index_t ue_index = ue_mng.add_ue(uint_to_du_index(0));
-  auto*      ue       = ue_mng.set_ue_du_context(ue_index, int_to_gnb_du_id(0), MIN_PCI, rnti);
-  if (ue == nullptr) {
-    test_logger.error("Failed to create UE with pci={} and rnti={}", MIN_PCI, rnti_t::MIN_CRNTI);
+  ue_index_t ue_index = ue_mng.add_ue(du_index_t::min, int_to_gnb_du_id(0), MIN_PCI, rnti, du_cell_index_t::min);
+  if (ue_index == ue_index_t::invalid) {
+    test_logger.error(
+        "Failed to create UE with pci={} rnti={} pcell_index={}", MIN_PCI, rnti_t::MIN_CRNTI, du_cell_index_t::min);
     return ue_index_t::invalid;
   }
 
@@ -75,16 +78,14 @@ ue_index_t ngap_test::create_ue(rnti_t rnti)
   test_ues.emplace(ue_index, test_ue(ue_index));
   test_ue& new_test_ue = test_ues.at(ue_index);
 
-  // Add UE to NGAP notifier
-  ngap_ue_creation_notifier.add_ue(
-      ue_index, new_test_ue.rrc_ue_notifier, new_test_ue.rrc_ue_notifier, *du_processor_notifier);
+  ue_mng.get_ngap_rrc_ue_adapter(ue_index).connect_rrc_ue(new_test_ue.rrc_ue_handler);
 
   // generate and inject valid initial ue message
   cu_cp_initial_ue_message msg = generate_initial_ue_message(ue_index);
   ngap->handle_initial_ue_message(msg);
 
   new_test_ue.ran_ue_id =
-      uint_to_ran_ue_id(msg_notifier.last_ngap_msgs.back().pdu.init_msg().value.init_ue_msg()->ran_ue_ngap_id);
+      uint_to_ran_ue_id(n2_gw.last_ngap_msgs.back().pdu.init_msg().value.init_ue_msg()->ran_ue_ngap_id);
 
   return ue_index;
 }
@@ -92,10 +93,10 @@ ue_index_t ngap_test::create_ue(rnti_t rnti)
 ue_index_t ngap_test::create_ue_without_init_ue_message(rnti_t rnti)
 {
   // Create UE in UE manager
-  ue_index_t ue_index = ue_mng.add_ue(uint_to_du_index(0));
-  auto*      ue       = ue_mng.set_ue_du_context(ue_index, int_to_gnb_du_id(0), MIN_PCI, rnti);
-  if (ue == nullptr) {
-    test_logger.error("Failed to create UE with pci={} and rnti={}", MIN_PCI, rnti_t::MIN_CRNTI);
+  ue_index_t ue_index = ue_mng.add_ue(du_index_t::min, int_to_gnb_du_id(0), MIN_PCI, rnti, du_cell_index_t::min);
+  if (ue_index == ue_index_t::invalid) {
+    test_logger.error(
+        "Failed to create UE with pci={} rnti={} pcell_index={}", MIN_PCI, rnti_t::MIN_CRNTI, du_cell_index_t::min);
     return ue_index_t::invalid;
   }
 
@@ -103,9 +104,7 @@ ue_index_t ngap_test::create_ue_without_init_ue_message(rnti_t rnti)
   test_ues.emplace(ue_index, test_ue(ue_index));
   test_ue& new_test_ue = test_ues.at(ue_index);
 
-  // Add UE to NGAP notifier
-  ngap_ue_creation_notifier.add_ue(
-      ue_index, new_test_ue.rrc_ue_notifier, new_test_ue.rrc_ue_notifier, *du_processor_notifier);
+  ue_mng.get_ngap_rrc_ue_adapter(ue_index).connect_rrc_ue(new_test_ue.rrc_ue_handler);
 
   return ue_index;
 }
@@ -141,7 +140,7 @@ void ngap_test::run_pdu_session_resource_setup(ue_index_t ue_index, pdu_session_
   auto& ue = test_ues.at(ue_index);
 
   ngap_message pdu_session_resource_setup_request = generate_valid_pdu_session_resource_setup_request_message(
-      ue.amf_ue_id.value(), ue.ran_ue_id.value(), pdu_session_id);
+      ue.amf_ue_id.value(), ue.ran_ue_id.value(), {{pdu_session_id, {{uint_to_qos_flow_id(1), 9}}}});
   ngap->handle_message(pdu_session_resource_setup_request);
 }
 
@@ -150,7 +149,7 @@ void ngap_test::add_pdu_session_to_up_manager(ue_index_t       ue_index,
                                               drb_id_t         drb_id,
                                               qos_flow_id_t    qos_flow_id)
 {
-  auto&                                        up_mng = ue_mng.find_ngap_ue(ue_index)->get_up_resource_manager();
+  auto&                                        up_mng = ue_mng.find_ue(ue_index)->get_up_resource_manager();
   up_config_update_result                      result;
   up_pdu_session_context_update                ctxt_update{pdu_session_id};
   std::map<qos_flow_id_t, up_qos_flow_context> qos_flows;

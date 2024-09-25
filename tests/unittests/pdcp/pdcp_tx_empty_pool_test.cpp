@@ -64,12 +64,16 @@ TEST_P(pdcp_tx_empty_pool_test, empty_pool)
     // Set state of PDCP entiy
     pdcp_tx_state st = {tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->configure_security(sec_cfg);
+    pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::off, security::ciphering_enabled::off);
 
     // Write first SDU
     for (uint32_t i = 0; i < n_sdus; i++) {
-      byte_buffer sdu = {sdu1};
-      pdcp_tx->handle_sdu(std::move(sdu));
+      auto sdu_buf = byte_buffer::create(sdu1);
+      if (not sdu_buf.has_value()) {
+        pdcp_tx->handle_sdu({});
+        break;
+      }
+      pdcp_tx->handle_sdu(std::move(sdu_buf.value()));
     }
     // check nof max_count reached and max protocol failures.
     ASSERT_NE(test_frame.pdu_queue.size(), n_sdus);

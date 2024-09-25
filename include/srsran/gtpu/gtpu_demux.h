@@ -24,12 +24,14 @@
 
 #include "srsran/adt/byte_buffer.h"
 #include "srsran/gtpu/gtpu_teid.h"
-#include "srsran/gtpu/gtpu_tunnel_rx.h"
+#include "srsran/gtpu/gtpu_tunnel_common_rx.h"
+#include "srsran/support/executors/task_executor.h"
 
 namespace srsran {
 
 struct gtpu_demux_cfg_t {
   bool warn_on_drop;
+  bool test_mode = false;
 };
 
 /// The GTP-U demux component will only be relevant for the reception and de-multiplexing
@@ -53,7 +55,8 @@ public:
   virtual ~gtpu_demux_ctrl() = default;
 
   /// Add a new TEID to GTP-U tunnel mapping.
-  virtual bool add_tunnel(gtpu_teid_t teid, gtpu_tunnel_rx_upper_layer_interface* tunnel) = 0;
+  virtual bool
+  add_tunnel(gtpu_teid_t teid, task_executor& tunnel_exec, gtpu_tunnel_common_rx_upper_layer_interface* tunnel) = 0;
 
   /// \brief Remove TEID from mapping.
   virtual bool remove_tunnel(gtpu_teid_t teid) = 0;

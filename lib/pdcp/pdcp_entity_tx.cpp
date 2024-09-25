@@ -21,10 +21,9 @@
  */
 
 #include "pdcp_entity_tx.h"
+#include "../security/security_engine_impl.h"
 #include "../support/sdu_window_impl.h"
 #include "srsran/instrumentation/traces/up_traces.h"
-#include "srsran/security/ciphering.h"
-#include "srsran/security/integrity.h"
 #include "srsran/support/bit_encoding.h"
 #include "srsran/support/srsran_assert.h"
 
@@ -84,7 +83,13 @@ void pdcp_entity_tx::handle_sdu(byte_buffer buf)
   // We will need a copy of the SDU for the discard timer when using AM
   byte_buffer sdu;
   if (cfg.discard_timer.has_value() && is_am()) {
-    sdu = buf.deep_copy();
+    auto sdu_copy = buf.deep_copy();
+    if (not sdu_copy.has_value()) {
+      logger.log_error("Unable to deep copy SDU");
+      upper_cn.on_protocol_failure();
+      return;
+    }
+    sdu = std::move(sdu_copy.value());
   }
 
   // Perform header compression
@@ -103,7 +108,7 @@ void pdcp_entity_tx::handle_sdu(byte_buffer buf)
 
   // Apply ciphering and integrity protection
   expected<byte_buffer> exp_buf = apply_ciphering_and_integrity_protection(std::move(buf), st.tx_next);
-  if (exp_buf.is_error()) {
+  if (not exp_buf.has_value()) {
     logger.log_error("Could not apply ciphering and integrity protection, dropping SDU and notifying RRC. count={}",
                      st.tx_next);
     upper_cn.on_protocol_failure();
@@ -116,7 +121,7 @@ void pdcp_entity_tx::handle_sdu(byte_buffer buf)
     unique_timer discard_timer = {};
     // Only start for finite durations
     if (cfg.discard_timer.value() != pdcp_discard_timer::infinity) {
-      discard_timer = timers.create_timer();
+      discard_timer = ue_dl_timer_factory.create_timer();
       discard_timer.set(std::chrono::milliseconds(static_cast<unsigned>(cfg.discard_timer.value())),
                         discard_callback{this, st.tx_next});
       discard_timer.run();
@@ -139,16 +144,21 @@ void pdcp_entity_tx::handle_sdu(byte_buffer buf)
   }
 
   // Write to lower layers
-  write_data_pdu_to_lower_layers(st.tx_next, std::move(protected_buf));
+  write_data_pdu_to_lower_layers(st.tx_next, std::move(protected_buf), /* is_retx = */ false);
 
   // Increment TX_NEXT
-  st.tx_next++;
+  uint32_t tx_count = st.tx_next++;
 
+  // Automatically trigger delivery notifications when using test mode
+  if (cfg.custom.test_mode) {
+    handle_transmit_notification(SN(tx_count));
+  }
   up_tracer << trace_event{"pdcp_tx_pdu", tx_tp};
 }
 
-void pdcp_entity_tx::reestablish(security::sec_128_as_config sec_cfg_)
+void pdcp_entity_tx::reestablish(security::sec_128_as_config sec_cfg)
 {
+  logger.log_debug("Reestablishing PDCP. st={}", st);
   // - for UM DRBs and AM DRBs, reset the ROHC protocol for uplink and start with an IR state in U-mode (as
   //   defined in RFC 3095 [8] and RFC 4815 [9]) if drb-ContinueROHC is not configured in TS 38.331 [3];
   // - for UM DRBs and AM DRBs, reset the EHC protocol for uplink if drb-ContinueEHC-UL is not configured in
@@ -169,7 +179,7 @@ void pdcp_entity_tx::reestablish(security::sec_128_as_config sec_cfg_)
   //   procedure;
   // - apply the integrity protection algorithm and key provided by upper layers during the PDCP entity re-
   //   establishment procedure;
-  configure_security(sec_cfg_);
+  configure_security(sec_cfg, integrity_enabled, ciphering_enabled);
 
   // - for UM DRBs, for each PDCP SDU already associated with a PDCP SN but for which a corresponding PDU has
   //   not previously been submitted to lower layers, and;
@@ -196,34 +206,38 @@ void pdcp_entity_tx::reestablish(security::sec_128_as_config sec_cfg_)
   if (is_am()) {
     retransmit_all_pdus();
   }
+  logger.log_info("Reestablished PDCP. st={}", st);
 }
 
-void pdcp_entity_tx::write_data_pdu_to_lower_layers(uint32_t count, byte_buffer buf)
+void pdcp_entity_tx::write_data_pdu_to_lower_layers(uint32_t count, byte_buffer buf, bool is_retx)
 {
-  logger.log_info(
-      buf.begin(), buf.end(), "TX PDU. type=data pdu_len={} sn={} count={}", buf.length(), SN(count), count);
+  logger.log_info(buf.begin(),
+                  buf.end(),
+                  "TX PDU. type=data pdu_len={} sn={} count={} is_retx={}",
+                  buf.length(),
+                  SN(count),
+                  count,
+                  is_retx);
   metrics_add_pdus(1, buf.length());
-  pdcp_tx_pdu tx_pdu = {};
-  tx_pdu.buf         = std::move(buf);
-  if (is_drb()) {
-    tx_pdu.pdcp_sn = SN(count); // Set only for data PDUs on DRBs.
-  }
-  lower_dn.on_new_pdu(std::move(tx_pdu));
+  lower_dn.on_new_pdu(std::move(buf), is_retx);
 }
 
 void pdcp_entity_tx::write_control_pdu_to_lower_layers(byte_buffer buf)
 {
   logger.log_info(buf.begin(), buf.end(), "TX PDU. type=ctrl pdu_len={}", buf.length());
   metrics_add_pdus(1, buf.length());
-  pdcp_tx_pdu tx_pdu = {};
-  tx_pdu.buf         = std::move(buf);
-  // tx_pdu.pdcp_sn is not set for control PDUs
-  lower_dn.on_new_pdu(std::move(tx_pdu));
+  lower_dn.on_new_pdu(std::move(buf), /* is_retx = */ false);
 }
 
 void pdcp_entity_tx::handle_status_report(byte_buffer_chain status)
 {
-  byte_buffer buf = {status.begin(), status.end()};
+  auto status_buffer = byte_buffer::create(status.begin(), status.end());
+  if (not status_buffer.has_value()) {
+    logger.log_warning("Unable to allocate byte_buffer");
+    return;
+  }
+
+  byte_buffer buf = std::move(status_buffer.value());
   bit_decoder dec(buf);
 
   // Unpack and check PDU header
@@ -279,86 +293,97 @@ void pdcp_entity_tx::handle_status_report(byte_buffer_chain status)
  */
 expected<byte_buffer> pdcp_entity_tx::apply_ciphering_and_integrity_protection(byte_buffer buf, uint32_t count)
 {
-  // TS 38.323, section 5.9: Integrity protection
-  // The data unit that is integrity protected is the PDU header
-  // and the data part of the PDU before ciphering.
-  unsigned          hdr_size = cfg.sn_size == pdcp_sn_size::size12bits ? 2 : 3;
-  security::sec_mac mac      = {};
-  byte_buffer_view  sdu_plus_header{buf.begin(), buf.end()};
-  if (integrity_enabled == security::integrity_enabled::on) {
-    integrity_generate(mac, sdu_plus_header, count);
-  }
-  // Append MAC-I
-  if (is_srb() || (is_drb() && (integrity_enabled == security::integrity_enabled::on))) {
-    if (not buf.append(mac)) {
-      return default_error_t{};
+  if (sec_engine == nullptr) {
+    // Security is not configured. Pass through for DRBs; append zero MAC-I for SRBs.
+    if (is_srb()) {
+      security::sec_mac mac = {};
+      if (not buf.append(mac)) {
+        logger.log_warning("Failed to append MAC-I to PDU. count={}", count);
+        return make_unexpected(default_error_t{});
+      }
     }
+    return buf;
   }
 
   // TS 38.323, section 5.8: Ciphering
   // The data unit that is ciphered is the MAC-I and the
   // data part of the PDCP Data PDU except the
   // SDAP header and the SDAP Control PDU if included in the PDCP SDU.
-  byte_buffer_view sdu_plus_mac{buf.begin() + hdr_size, buf.end()};
-  if (ciphering_enabled == security::ciphering_enabled::on &&
-      sec_cfg.cipher_algo != security::ciphering_algorithm::nea0) {
-    cipher_encrypt(sdu_plus_mac, count);
-  }
 
-  return std::move(buf);
+  // TS 38.323, section 5.9: Integrity protection
+  // The data unit that is integrity protected is the PDU header
+  // and the data part of the PDU before ciphering.
+
+  unsigned                  hdr_size = cfg.sn_size == pdcp_sn_size::size12bits ? 2 : 3;
+  security::security_result result   = sec_engine->encrypt_and_protect_integrity(std::move(buf), hdr_size, count);
+  if (!result.buf.has_value()) {
+    logger.log_warning("Failed to apply security on PDU. count={}", result.count);
+  }
+  return {std::move(result.buf.value())};
 }
 
-void pdcp_entity_tx::integrity_generate(security::sec_mac& mac, byte_buffer_view buf, uint32_t count)
+/*
+ * Security configuration
+ */
+void pdcp_entity_tx::configure_security(security::sec_128_as_config sec_cfg,
+                                        security::integrity_enabled integrity_enabled_,
+                                        security::ciphering_enabled ciphering_enabled_)
 {
-  srsran_assert(sec_cfg.k_128_int.has_value(), "Cannot generate integrity: Integrity key is not configured.");
-  srsran_assert(sec_cfg.integ_algo.has_value(), "Cannot generate integrity: Integrity algorithm is not configured.");
-  switch (sec_cfg.integ_algo.value()) {
-    case security::integrity_algorithm::nia0:
-      // TS 33.501, Sec. D.1
-      // The NIA0 algorithm shall be implemented in such way that it shall generate a 32 bit MAC-I/NAS-MAC and
-      // XMAC-I/XNAS-MAC of all zeroes (see sub-clause D.3.1).
-      std::fill(mac.begin(), mac.end(), 0);
-      break;
-    case security::integrity_algorithm::nia1:
-      security_nia1(mac, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf);
-      break;
-    case security::integrity_algorithm::nia2:
-      security_nia2(mac, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf);
-      break;
-    case security::integrity_algorithm::nia3:
-      security_nia3(mac, sec_cfg.k_128_int.value(), count, bearer_id, direction, buf);
-      break;
-    default:
-      break;
+  srsran_assert((is_srb() && sec_cfg.domain == security::sec_domain::rrc) ||
+                    (is_drb() && sec_cfg.domain == security::sec_domain::up),
+                "Invalid sec_domain={} for {} in {}",
+                sec_cfg.domain,
+                rb_type,
+                rb_id);
+  // The 'NULL' integrity protection algorithm (nia0) is used only for SRBs and for the UE in limited service mode,
+  // see TS 33.501 [11] and when used for SRBs, integrity protection is disabled for DRBs. In case the ′NULL'
+  // integrity protection algorithm is used, 'NULL' ciphering algorithm is also used.
+  // Ref: TS 38.331 Sec. 5.3.1.2
+  //
+  // From TS 38.501 Sec. 6.7.3.6: UEs that are in limited service mode (LSM) and that cannot be authenticated (...) may
+  // still be allowed to establish emergency session by sending the emergency registration request message. (...)
+  if ((sec_cfg.integ_algo == security::integrity_algorithm::nia0) &&
+      (is_drb() || (is_srb() && sec_cfg.cipher_algo != security::ciphering_algorithm::nea0))) {
+    logger.log_error("Integrity algorithm NIA0 is only permitted for SRBs configured with NEA0. is_srb={} NIA{} NEA{}",
+                     is_srb(),
+                     sec_cfg.integ_algo,
+                     sec_cfg.cipher_algo);
   }
 
-  logger.log_debug("Integrity gen. count={} bearer_id={} dir={}", count, bearer_id, direction);
-  logger.log_debug((uint8_t*)sec_cfg.k_128_int.value().data(), sec_cfg.k_128_int.value().size(), "Integrity gen key.");
-  logger.log_debug(buf.begin(), buf.end(), "Integrity gen input message.");
-  logger.log_debug((uint8_t*)mac.data(), mac.size(), "MAC generated.");
-}
-
-void pdcp_entity_tx::cipher_encrypt(byte_buffer_view& buf, uint32_t count)
-{
-  logger.log_debug("Cipher encrypt. count={} bearer_id={} dir={}", count, bearer_id, direction);
-  logger.log_debug((uint8_t*)sec_cfg.k_128_enc.data(), sec_cfg.k_128_enc.size(), "Cipher encrypt key.");
-  logger.log_debug(buf.begin(), buf.end(), "Cipher encrypt input msg.");
-
-  switch (sec_cfg.cipher_algo) {
-    case security::ciphering_algorithm::nea1:
-      security_nea1(sec_cfg.k_128_enc, count, bearer_id, direction, buf);
-      break;
-    case security::ciphering_algorithm::nea2:
-      security_nea2(sec_cfg.k_128_enc, count, bearer_id, direction, buf);
-      break;
-    case security::ciphering_algorithm::nea3:
-      security_nea3(sec_cfg.k_128_enc, count, bearer_id, direction, buf);
-      break;
-    default:
-      break;
+  // Evaluate and store integrity indication
+  if (integrity_enabled_ == security::integrity_enabled::on) {
+    if (!sec_cfg.k_128_int.has_value()) {
+      logger.log_error("Cannot enable integrity protection: Integrity key is not configured.");
+      return;
+    }
+    if (!sec_cfg.integ_algo.has_value()) {
+      logger.log_error("Cannot enable integrity protection: Integrity algorithm is not configured.");
+      return;
+    }
+  } else {
+    srsran_assert(!is_srb(), "Integrity protection cannot be disabled for SRBs.");
   }
-  logger.log_debug(buf.begin(), buf.end(), "Cipher encrypt output msg.");
-}
+  integrity_enabled = integrity_enabled_;
+
+  // Evaluate and store ciphering indication
+  ciphering_enabled = ciphering_enabled_;
+
+  auto direction = cfg.direction == pdcp_security_direction::uplink ? security::security_direction::uplink
+                                                                    : security::security_direction::downlink;
+  sec_engine     = std::make_unique<security::security_engine_impl>(
+      sec_cfg, bearer_id, direction, integrity_enabled, ciphering_enabled);
+
+  logger.log_info("Security configured: NIA{} ({}) NEA{} ({}) domain={}",
+                  sec_cfg.integ_algo,
+                  integrity_enabled,
+                  sec_cfg.cipher_algo,
+                  ciphering_enabled,
+                  sec_cfg.domain);
+  if (sec_cfg.k_128_int.has_value()) {
+    logger.log_info("128 K_int: {}", sec_cfg.k_128_int.value());
+  }
+  logger.log_info("128 K_enc: {}", sec_cfg.k_128_enc);
+};
 
 /*
  * Status report and data recovery
@@ -420,7 +445,14 @@ void pdcp_entity_tx::retransmit_all_pdus()
       hdr.sn                   = SN(sdu_info.count);
 
       // Pack header
-      byte_buffer buf = sdu_info.sdu.deep_copy();
+      auto buf_copy = sdu_info.sdu.deep_copy();
+      if (not buf_copy.has_value()) {
+        logger.log_error("Could not deep copy SDU, dropping SDU and notifying RRC. count={} {}", sdu_info.count, st);
+        upper_cn.on_protocol_failure();
+        return;
+      }
+
+      byte_buffer buf = std::move(buf_copy.value());
       if (not write_data_pdu_header(buf, hdr)) {
         logger.log_error(
             "Could not append PDU header, dropping SDU and notifying RRC. count={} {}", sdu_info.count, st);
@@ -433,7 +465,7 @@ void pdcp_entity_tx::retransmit_all_pdus()
 
       // Perform integrity protection and ciphering
       expected<byte_buffer> exp_buf = apply_ciphering_and_integrity_protection(std::move(buf), sdu_info.count);
-      if (exp_buf.is_error()) {
+      if (not exp_buf.has_value()) {
         logger.log_error("Could not apply ciphering and integrity protection during retransmissions, dropping SDU and "
                          "notifying RRC. count={} {}",
                          sdu_info.count,
@@ -443,7 +475,7 @@ void pdcp_entity_tx::retransmit_all_pdus()
       }
 
       byte_buffer protected_buf = std::move(exp_buf.value());
-      write_data_pdu_to_lower_layers(sdu_info.count, std::move(protected_buf));
+      write_data_pdu_to_lower_layers(sdu_info.count, std::move(protected_buf), /* is_retx = */ true);
     }
   }
 }
@@ -460,7 +492,7 @@ void pdcp_entity_tx::handle_transmit_notification(uint32_t notif_sn)
   }
   uint32_t notif_count = notification_count_estimation(notif_sn);
   if (notif_count < st.tx_trans) {
-    logger.log_error(
+    logger.log_info(
         "Invalid notification SN, notif_count is too low. notif_sn={} notif_count={} {}", notif_sn, notif_count, st);
     return;
   }
@@ -503,8 +535,40 @@ void pdcp_entity_tx::handle_delivery_notification(uint32_t notif_sn)
   if (is_am()) {
     stop_discard_timer(notif_count);
   } else {
-    logger.log_warning("Received PDU delivery notification on UM bearer. sn={}", notif_sn);
+    logger.log_error("Ignored unexpected PDU delivery notification in UM bearer. notif_sn={}", notif_sn);
   }
+}
+
+void pdcp_entity_tx::handle_retransmit_notification(uint32_t notif_sn)
+{
+  if (SRSRAN_UNLIKELY(is_srb())) {
+    logger.log_error("Ignored unexpected PDU retransmit notification in SRB. notif_sn={}", notif_sn);
+    return;
+  }
+  if (SRSRAN_UNLIKELY(is_um())) {
+    logger.log_error("Ignored unexpected PDU retransmit notification in UM bearer. notif_sn={}", notif_sn);
+    return;
+  }
+
+  // Nothing to do here
+  logger.log_debug("Ignored handling PDU retransmit notification for notif_sn={}", notif_sn);
+}
+
+void pdcp_entity_tx::handle_delivery_retransmitted_notification(uint32_t notif_sn)
+{
+  if (SRSRAN_UNLIKELY(is_srb())) {
+    logger.log_error("Ignored unexpected PDU delivery retransmitted notification in SRB. notif_sn={}", notif_sn);
+    return;
+  }
+  if (SRSRAN_UNLIKELY(is_um())) {
+    logger.log_error("Ignored unexpected PDU delivery retransmitted notification in UM bearer. notif_sn={}", notif_sn);
+    return;
+  }
+
+  // TODO: Here we can stop discard timers of successfully retransmitted PDUs once they can be distinguished from
+  // origianls (e.g. if they are moved into a separate container upon retransmission).
+  // For now those retransmitted PDUs will be cleaned when handling delivery notification for following originals.
+  logger.log_debug("Ignored handling PDU delivery retransmitted notification for notif_sn={}", notif_sn);
 }
 
 uint32_t pdcp_entity_tx::notification_count_estimation(uint32_t notification_sn)

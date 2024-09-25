@@ -22,28 +22,25 @@
 
 #pragma once
 
-#include "../common/e1ap_asn1_utils.h"
 #include "e1ap_cu_up_connection_handler.h"
 #include "ue_context/e1ap_cu_up_ue_context.h"
 #include "srsran/asn1/e1ap/e1ap.h"
 #include "srsran/e1ap/cu_up/e1ap_cu_up.h"
 #include "srsran/support/executors/task_executor.h"
 #include "srsran/support/timers.h"
-#include <unordered_map>
 
-namespace srsran {
-namespace srs_cu_up {
+namespace srsran::srs_cu_up {
 
-class e1ap_connection_client;
+class e1_connection_client;
 class e1ap_event_manager;
 
 class e1ap_cu_up_impl final : public e1ap_interface
 {
 public:
-  e1ap_cu_up_impl(e1ap_connection_client& e1ap_client_handler_,
-                  e1ap_cu_up_notifier&    cu_up_notifier_,
-                  timer_manager&          timers_,
-                  task_executor&          cu_up_exec_);
+  e1ap_cu_up_impl(e1_connection_client&        e1_client_handler_,
+                  e1ap_cu_up_manager_notifier& cu_up_notifier_,
+                  timer_manager&               timers_,
+                  task_executor&               cu_up_exec_);
   ~e1ap_cu_up_impl() override;
 
   // e1ap connection manager functions
@@ -64,6 +61,22 @@ public:
   size_t get_nof_ues() const override { return ue_ctxt_list.size(); }
 
 private:
+  /// \brief Decorator of e1ap_message_notifier that logs the transmitted E1AP messages.
+  class e1ap_message_notifier_with_logging final : public e1ap_message_notifier
+  {
+  public:
+    e1ap_message_notifier_with_logging(e1ap_cu_up_impl& parent_, e1ap_message_notifier& notifier_);
+
+    void on_new_message(const e1ap_message& msg) override;
+
+  private:
+    e1ap_cu_up_impl&       parent;
+    e1ap_message_notifier& notifier;
+  };
+
+  /// \brief Log an E1AP Tx/Rx PDU.
+  void log_pdu(bool is_rx, const e1ap_message& e1ap_pdu);
+
   /// \brief Notify about the reception of an initiating message.
   /// \param[in] msg The received initiating message.
   void handle_initiating_message(const asn1::e1ap::init_msg_s& msg);
@@ -94,12 +107,13 @@ private:
   srslog::basic_logger& logger;
 
   // nofifiers and handles
-  e1ap_cu_up_notifier& cu_up_notifier;
+  e1ap_cu_up_manager_notifier& cu_up_notifier;
 
   timer_manager& timers;
   task_executor& cu_up_exec;
 
-  e1ap_cu_up_connection_handler connection_handler;
+  e1ap_cu_up_connection_handler                       connection_handler;
+  std::unique_ptr<e1ap_message_notifier_with_logging> pdu_notifier;
 
   /// Repository of UE Contexts.
   e1ap_ue_context_list ue_ctxt_list;
@@ -107,5 +121,4 @@ private:
   std::unique_ptr<e1ap_event_manager> ev_mng;
 };
 
-} // namespace srs_cu_up
-} // namespace srsran
+} // namespace srsran::srs_cu_up

@@ -110,8 +110,8 @@ protected:
 
     // Create PDCP RX entity
     test_frame = std::make_unique<pdcp_rx_test_frame>();
-    pdcp_rx =
-        std::make_unique<pdcp_entity_rx>(0, rb_id, config, *test_frame, *test_frame, timer_factory{timers, worker});
+    pdcp_rx    = std::make_unique<pdcp_entity_rx>(
+        0, rb_id, config, *test_frame, *test_frame, timer_factory{timers, worker}, worker, worker);
     pdcp_rx->set_status_handler(test_frame.get());
 
     srslog::flush();
@@ -123,6 +123,15 @@ protected:
   void get_test_pdu(uint32_t count, byte_buffer& exp_pdu)
   {
     ASSERT_EQ(true, get_pdu_test_vector(sn_size, count, exp_pdu, algo));
+  }
+
+  /// \brief Gets test PDU based on the COUNT and SN size and algo
+  /// \param count COUNT being tested
+  /// \param exp_pdu Expected PDU that is set to the correct test vector
+  /// \param custom_algo Pick PDU for a specific algorithm (which may differ from current config)
+  void get_test_pdu(uint32_t count, byte_buffer& exp_pdu, unsigned custom_algo)
+  {
+    ASSERT_EQ(true, get_pdu_test_vector(sn_size, count, exp_pdu, custom_algo));
   }
 
   /// \brief Helper to advance the timers

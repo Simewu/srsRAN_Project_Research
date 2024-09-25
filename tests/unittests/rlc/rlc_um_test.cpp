@@ -21,7 +21,7 @@
  */
 
 #include "lib/rlc/rlc_um_entity.h"
-#include "tests/unittests/rlc/rlc_test_helpers.h"
+#include "tests/test_doubles/pdcp/pdcp_pdu_generator.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include <fmt/ostream.h>
 #include <gtest/gtest.h>
@@ -40,6 +40,7 @@ public:
   std::queue<byte_buffer_chain> sdu_queue;
   uint32_t                      sdu_counter = 0;
   std::list<uint32_t>           transmitted_pdcp_sn_list;
+  std::list<uint32_t>           queue_free_bytes_list;
   uint32_t                      bsr       = 0;
   uint32_t                      bsr_count = 0;
 
@@ -51,12 +52,14 @@ public:
   }
 
   // rlc_tx_upper_layer_data_notifier interface
-  void on_transmitted_sdu(uint32_t max_tx_pdcp_sn) override
+  void on_transmitted_sdu(uint32_t max_tx_pdcp_sn, uint32_t queue_free_bytes) override
   {
     // store in list
     transmitted_pdcp_sn_list.push_back(max_tx_pdcp_sn);
   }
   void on_delivered_sdu(uint32_t max_deliv_pdcp_sn) override {}
+  void on_retransmitted_sdu(uint32_t max_retx_pdcp_sn) override {}
+  void on_delivered_retransmitted_sdu(uint32_t max_deliv_retx_pdcp_sn) override {}
 
   // rlc_tx_upper_layer_control_notifier interface
   void on_protocol_failure() override {}
@@ -92,11 +95,13 @@ protected:
     config.rx.t_reassembly    = 5;
 
     // Set Tx config
-    config.tx.sn_field_length = sn_size;
-    config.tx.queue_size      = 4096;
+    config.tx.sn_field_length  = sn_size;
+    config.tx.pdcp_sn_len      = pdcp_sn_size::size12bits;
+    config.tx.queue_size       = 4096;
+    config.tx.queue_size_bytes = 4096 * 1500;
 
     // Create RLC entities
-    rlc1 = std::make_unique<rlc_um_entity>(0,
+    rlc1 = std::make_unique<rlc_um_entity>(gnb_du_id_t::min,
                                            du_ue_index_t::MIN_DU_UE_INDEX,
                                            srb_id_t::srb0,
                                            config,
@@ -106,11 +111,11 @@ protected:
                                            tester1,
                                            tester1,
                                            tester1,
-                                           timers,
+                                           pcap1,
                                            pcell_worker,
                                            ue_worker,
-                                           pcap1);
-    rlc2 = std::make_unique<rlc_um_entity>(0,
+                                           timers);
+    rlc2 = std::make_unique<rlc_um_entity>(gnb_du_id_t::min,
                                            du_ue_index_t::MIN_DU_UE_INDEX,
                                            srb_id_t::srb0,
                                            config,
@@ -120,10 +125,10 @@ protected:
                                            tester2,
                                            tester2,
                                            tester2,
-                                           timers,
+                                           pcap2,
                                            pcell_worker,
                                            ue_worker,
-                                           pcap2);
+                                           timers);
 
     // Bind interfaces
     rlc1_rx_lower = rlc1->get_rx_lower_layer_interface();
@@ -173,23 +178,32 @@ protected:
       }
 
       // write SDU into upper end
-      rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
-      rlc1_tx_upper->handle_sdu(std::move(sdu));
+      rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
     }
     buffer_state = rlc1_tx_lower->get_buffer_state();
     EXPECT_EQ(num_sdus * (sdu_size + 1), buffer_state);
 
     // Read PDUs from RLC1 with grant of 25 Bytes each
-    const uint32_t    payload_len  = 25;
-    const uint32_t    max_num_pdus = 10;
-    uint32_t          num_pdus     = 0;
-    byte_buffer_chain pdu_bufs[max_num_pdus];
+    const uint32_t    payload_len            = 25;
+    const uint32_t    max_num_pdus           = 10;
+    uint32_t          num_pdus               = 0;
+    byte_buffer_chain pdu_bufs[max_num_pdus] = {byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value(),
+                                                byte_buffer_chain::create().value()};
 
     buffer_state = rlc1_tx_lower->get_buffer_state();
     std::vector<uint8_t> tx_pdu(payload_len);
     while (buffer_state > 0 && num_pdus < max_num_pdus) {
-      unsigned n         = rlc1_tx_lower->pull_pdu(tx_pdu);
-      pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>{tx_pdu.data(), n}};
+      unsigned n = rlc1_tx_lower->pull_pdu(tx_pdu);
+      pdu_bufs[num_pdus] =
+          byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), n}).value()).value();
 
       if (pdu_bufs[num_pdus].empty()) {
         break;
@@ -206,7 +220,7 @@ protected:
         if (i != hold_back_pdu) {
           byte_buffer pdu;
           for (const byte_buffer_slice& slice : pdu_bufs[i].slices()) {
-            pdu.append(slice);
+            EXPECT_TRUE(pdu.append(slice));
           }
           rlc2_rx_lower->handle_pdu(std::move(pdu));
         }
@@ -219,7 +233,7 @@ protected:
     {
       byte_buffer pdu;
       for (const byte_buffer_slice& slice : pdu_bufs[hold_back_pdu].slices()) {
-        pdu.append(slice);
+        EXPECT_TRUE(pdu.append(slice));
       }
       rlc2_rx_lower->handle_pdu(std::move(pdu));
     }
@@ -331,19 +345,15 @@ TEST_P(rlc_um_test, tx_without_segmentation)
 {
   const uint32_t num_sdus = 5;
   const uint32_t num_pdus = 5;
-  const uint32_t sdu_size = 1;
+  const uint32_t sdu_size = 3;
 
   // Push SDUs into RLC1
   byte_buffer sdu_bufs[num_sdus];
   for (uint32_t i = 0; i < num_sdus; i++) {
-    sdu_bufs[i] = byte_buffer();
-    for (uint32_t k = 0; k < sdu_size; ++k) {
-      ASSERT_TRUE(sdu_bufs[i].append(i + k));
-    }
+    sdu_bufs[i] = test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i + 13, sdu_size, i);
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i + 13}; // no std::move - keep local copy for later comparison
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
   }
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), num_sdus * (sdu_size + 1));
@@ -351,12 +361,17 @@ TEST_P(rlc_um_test, tx_without_segmentation)
   EXPECT_EQ(tester1.bsr_count, 1);
 
   // Read PDUs from RLC1
-  byte_buffer_chain    pdu_bufs[num_pdus];
-  const int            payload_len = 1 + sdu_size; // 1 bytes for header + payload
+  byte_buffer_chain    pdu_bufs[num_pdus] = {byte_buffer_chain::create().value(),
+                                             byte_buffer_chain::create().value(),
+                                             byte_buffer_chain::create().value(),
+                                             byte_buffer_chain::create().value(),
+                                             byte_buffer_chain::create().value()};
+  const int            payload_len        = 1 + sdu_size; // 1 bytes for header + payload
   std::vector<uint8_t> tx_pdu(payload_len);
   for (uint32_t i = 0; i < num_pdus; i++) {
     unsigned nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
-    pdu_bufs[i]       = byte_buffer_slice{span<uint8_t>{tx_pdu.data(), nwritten}};
+    pdu_bufs[i] =
+        byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), nwritten}).value()).value();
     EXPECT_EQ(payload_len, pdu_bufs[i].length());
     EXPECT_EQ(i, pdu_bufs[i][payload_len - 1]); // check if last payload item corresponds with index
 
@@ -376,7 +391,7 @@ TEST_P(rlc_um_test, tx_without_segmentation)
   for (uint32_t i = 0; i < num_pdus; i++) {
     byte_buffer pdu;
     for (const byte_buffer_slice& slice : pdu_bufs[i].slices()) {
-      pdu.append(slice);
+      EXPECT_TRUE(pdu.append(slice));
     }
     rlc2_rx_lower->handle_pdu(std::move(pdu));
   }
@@ -404,15 +419,10 @@ TEST_P(rlc_um_test, tx_with_segmentation)
   // Push SDUs into RLC1
   byte_buffer sdu_bufs[num_sdus];
   for (uint32_t i = 0; i < num_sdus; i++) {
-    sdu_bufs[i] = byte_buffer();
-    // Write the index into the buffer
-    for (uint32_t k = 0; k < sdu_size; ++k) {
-      ASSERT_TRUE(sdu_bufs[i].append(i + k));
-    }
+    sdu_bufs[i] = test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i);
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
   }
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), num_sdus * (sdu_size + 1));
@@ -420,15 +430,25 @@ TEST_P(rlc_um_test, tx_with_segmentation)
   EXPECT_EQ(tester1.bsr_count, 1);
 
   // Read PDUs from RLC1 with grant of 25 Bytes each
-  const uint32_t    payload_len  = 25;
-  const uint32_t    max_num_pdus = 10;
-  uint32_t          num_pdus     = 0;
-  byte_buffer_chain pdu_bufs[max_num_pdus];
+  const uint32_t    payload_len            = 25;
+  const uint32_t    max_num_pdus           = 10;
+  uint32_t          num_pdus               = 0;
+  byte_buffer_chain pdu_bufs[max_num_pdus] = {byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value()};
 
   std::vector<uint8_t> tx_pdu(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    unsigned nwritten  = rlc1_tx_lower->pull_pdu(tx_pdu);
-    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
+    unsigned nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
+    pdu_bufs[num_pdus] =
+        byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), nwritten}).value()).value();
 
     if (num_pdus % ((sdu_size / payload_len) + 1) == 0) {
       // Verify transmit notification
@@ -456,7 +476,7 @@ TEST_P(rlc_um_test, tx_with_segmentation)
   for (uint32_t i = 0; i < num_pdus; i++) {
     byte_buffer pdu;
     for (const byte_buffer_slice& slice : pdu_bufs[i].slices()) {
-      pdu.append(slice);
+      EXPECT_TRUE(pdu.append(slice));
     }
     rlc2_rx_lower->handle_pdu(std::move(pdu));
   }
@@ -479,19 +499,15 @@ TEST_P(rlc_um_test, tx_with_segmentation)
 TEST_P(rlc_um_test, sdu_discard)
 {
   const uint32_t num_sdus = 6;
-  const uint32_t sdu_size = 1;
+  const uint32_t sdu_size = 3;
 
   // Push SDUs into RLC1
   byte_buffer sdu_bufs[num_sdus];
   for (uint32_t i = 0; i < num_sdus; i++) {
-    sdu_bufs[i] = byte_buffer();
-    for (uint32_t k = 0; k < sdu_size; ++k) {
-      ASSERT_TRUE(sdu_bufs[i].append(i + k));
-    }
+    sdu_bufs[i] = test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i);
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
   }
 
   tester1.bsr_count = 0; // reset
@@ -510,29 +526,30 @@ TEST_P(rlc_um_test, sdu_discard)
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr, expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 0);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 0);
 
   // Try discard of invalid SDU
   rlc1_tx_upper->discard_sdu(999);
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(tester1.bsr, expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 1);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 1);
 
   // Try discard of already discarded SDU
   rlc1_tx_upper->discard_sdu(0);
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(tester1.bsr, expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 2);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 2);
 
   // Transmit full PDU
   std::vector<uint8_t> tx_pdu(data_pdu_size);
   unsigned             nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
-  byte_buffer_chain    pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
+  byte_buffer_chain    pdu =
+      byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), nwritten}).value()).value();
   EXPECT_FALSE(pdu.empty());
   EXPECT_TRUE(std::equal(pdu.begin() + header_size, pdu.end(), sdu_bufs[1].begin()));
   expect_buffer_state = (num_sdus - 4) * data_pdu_size;
@@ -540,21 +557,21 @@ TEST_P(rlc_um_test, sdu_discard)
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 2);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 2);
 
   // Try discard of already transmitted SDU
   rlc1_tx_upper->discard_sdu(1);
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 3);
 
   // Transmit full PDU
   tx_pdu.resize(data_pdu_size);
   nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
-  pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
+  pdu = byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), nwritten}).value()).value();
   EXPECT_FALSE(pdu.empty());
   EXPECT_TRUE(std::equal(pdu.begin() + header_size, pdu.end(), sdu_bufs[2].begin()));
   expect_buffer_state = (num_sdus - 5) * data_pdu_size;
@@ -562,8 +579,8 @@ TEST_P(rlc_um_test, sdu_discard)
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 3);
 
   // Discard remaining SDU
   rlc1_tx_upper->discard_sdu(5);
@@ -573,30 +590,26 @@ TEST_P(rlc_um_test, sdu_discard)
   EXPECT_EQ(tester1.bsr, expect_buffer_state);
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 2);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 4);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 4);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 3);
 }
 
 TEST_P(rlc_um_test, sdu_discard_with_pdcp_sn_wraparound)
 {
   const uint32_t num_sdus = 6;
-  const uint32_t sdu_size = 1;
+  const uint32_t sdu_size = 3;
 
-  const uint32_t pdcp_sn_start = 4092;
   const uint32_t pdcp_sn_mod   = 4096;
+  const uint32_t pdcp_sn_start = pdcp_sn_mod - 4;
 
   // Push SDUs into RLC1
   byte_buffer sdu_bufs[num_sdus];
   for (uint32_t i = 0; i < num_sdus; i++) {
-    sdu_bufs[i] = byte_buffer();
-    for (uint32_t k = 0; k < sdu_size; ++k) {
-      ASSERT_TRUE(sdu_bufs[i].append(i + k));
-    }
+    sdu_bufs[i] = test_helpers::create_pdcp_pdu(
+        config.tx.pdcp_sn_len, /* is_srb = */ false, (pdcp_sn_start + i) % pdcp_sn_mod, sdu_size, i);
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(),
-                   /* pdcp_sn = */ (pdcp_sn_start + i) % pdcp_sn_mod}; // no std::move, keep copy for later comparison
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
   }
 
   tester1.bsr_count = 0; // reset
@@ -615,29 +628,30 @@ TEST_P(rlc_um_test, sdu_discard_with_pdcp_sn_wraparound)
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr, expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 0);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 0);
 
   // Try discard of invalid SDU
   rlc1_tx_upper->discard_sdu((pdcp_sn_start + 999) % pdcp_sn_mod);
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(tester1.bsr, expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 1);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 1);
 
   // Try discard of already discarded SDU
   rlc1_tx_upper->discard_sdu((pdcp_sn_start + 0) % pdcp_sn_mod);
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(tester1.bsr, expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 2);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 2);
 
   // Transmit full PDU
   std::vector<uint8_t> tx_pdu(data_pdu_size);
   unsigned             nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
-  byte_buffer_chain    pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
+  byte_buffer_chain    pdu =
+      byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), nwritten}).value()).value();
   EXPECT_FALSE(pdu.empty());
   EXPECT_TRUE(std::equal(pdu.begin() + header_size, pdu.end(), sdu_bufs[1].begin()));
   expect_buffer_state = (num_sdus - 4) * data_pdu_size;
@@ -645,20 +659,20 @@ TEST_P(rlc_um_test, sdu_discard_with_pdcp_sn_wraparound)
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 2);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 2);
 
   // Try discard of already transmitted SDU
   rlc1_tx_upper->discard_sdu((pdcp_sn_start + 1) % pdcp_sn_mod);
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 3);
 
   // Transmit full PDU
   nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
-  pdu      = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
+  pdu = byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), nwritten}).value()).value();
   EXPECT_FALSE(pdu.empty());
   EXPECT_TRUE(std::equal(pdu.begin() + header_size, pdu.end(), sdu_bufs[2].begin()));
   expect_buffer_state = (num_sdus - 5) * data_pdu_size;
@@ -666,8 +680,8 @@ TEST_P(rlc_um_test, sdu_discard_with_pdcp_sn_wraparound)
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 1);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 3);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 3);
 
   // Discard remaining SDU
   rlc1_tx_upper->discard_sdu((pdcp_sn_start + 5) % pdcp_sn_mod);
@@ -676,8 +690,8 @@ TEST_P(rlc_um_test, sdu_discard_with_pdcp_sn_wraparound)
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), expect_buffer_state);
   EXPECT_EQ(tester1.bsr_count, 2);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discarded_sdus, 4);
-  EXPECT_EQ(rlc1->get_metrics().tx.num_discard_failures, 3);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discarded_sdus, 4);
+  EXPECT_EQ(rlc1->get_metrics().tx.tx_high.num_discard_failures, 3);
 }
 
 TEST_P(rlc_um_test, tx_with_segmentation_reverse_rx)
@@ -688,15 +702,10 @@ TEST_P(rlc_um_test, tx_with_segmentation_reverse_rx)
   // Push SDUs into RLC1
   byte_buffer sdu_bufs[num_sdus];
   for (uint32_t i = 0; i < num_sdus; i++) {
-    sdu_bufs[i] = byte_buffer();
-    // Write the index into the buffer
-    for (uint32_t k = 0; k < sdu_size; ++k) {
-      ASSERT_TRUE(sdu_bufs[i].append(i + k));
-    }
+    sdu_bufs[i] = test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i);
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
   }
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), num_sdus * (sdu_size + 1));
@@ -704,15 +713,25 @@ TEST_P(rlc_um_test, tx_with_segmentation_reverse_rx)
   EXPECT_EQ(tester1.bsr_count, 1);
 
   // Read PDUs from RLC1 with grant of 25 Bytes each
-  const uint32_t    payload_len  = 25;
-  const uint32_t    max_num_pdus = 10;
-  uint32_t          num_pdus     = 0;
-  byte_buffer_chain pdu_bufs[max_num_pdus];
+  const uint32_t    payload_len            = 25;
+  const uint32_t    max_num_pdus           = 10;
+  uint32_t          num_pdus               = 0;
+  byte_buffer_chain pdu_bufs[max_num_pdus] = {byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value(),
+                                              byte_buffer_chain::create().value()};
 
   std::vector<uint8_t> tx_pdu(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    unsigned nwritten  = rlc1_tx_lower->pull_pdu(tx_pdu);
-    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
+    unsigned nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
+    pdu_bufs[num_pdus] =
+        byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), nwritten}).value()).value();
 
     if (num_pdus % ((sdu_size / payload_len) + 1) == 0) {
       // Verify transmit notification
@@ -740,7 +759,7 @@ TEST_P(rlc_um_test, tx_with_segmentation_reverse_rx)
   for (uint32_t i = 0; i < num_pdus; i++) {
     byte_buffer pdu;
     for (const byte_buffer_slice& slice : pdu_bufs[num_pdus - i - 1].slices()) {
-      pdu.append(slice);
+      EXPECT_TRUE(pdu.append(slice));
     }
     rlc2_rx_lower->handle_pdu(std::move(pdu));
   }
@@ -768,15 +787,10 @@ TEST_P(rlc_um_test, tx_multiple_SDUs_with_segmentation)
   // Push SDUs into RLC1
   byte_buffer sdu_bufs[num_sdus];
   for (uint32_t i = 0; i < num_sdus; i++) {
-    sdu_bufs[i] = byte_buffer();
-    // Write the index into the buffer
-    for (uint32_t k = 0; k < sdu_size; ++k) {
-      ASSERT_TRUE(sdu_bufs[i].append(i + k));
-    }
+    sdu_bufs[i] = test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i);
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
   }
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), num_sdus * (sdu_size + 1));
@@ -784,15 +798,24 @@ TEST_P(rlc_um_test, tx_multiple_SDUs_with_segmentation)
   EXPECT_EQ(tester1.bsr_count, 1);
 
   // Read PDUs from RLC1 with grant of 25 Bytes each
-  const uint32_t    payload_len  = 25;
-  const uint32_t    max_num_pdus = 20;
-  uint32_t          num_pdus     = 0;
-  byte_buffer_chain pdu_bufs[max_num_pdus];
+  const uint32_t    payload_len            = 25;
+  const uint32_t    max_num_pdus           = 20;
+  uint32_t          num_pdus               = 0;
+  byte_buffer_chain pdu_bufs[max_num_pdus] = {
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+  };
 
   std::vector<uint8_t> tx_pdu(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    unsigned nwritten  = rlc1_tx_lower->pull_pdu(tx_pdu);
-    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(tx_pdu.data(), nwritten)};
+    unsigned nwritten = rlc1_tx_lower->pull_pdu(tx_pdu);
+    pdu_bufs[num_pdus] =
+        byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{tx_pdu.data(), nwritten}).value()).value();
 
     if (pdu_bufs[num_pdus].empty()) {
       break;
@@ -810,7 +833,7 @@ TEST_P(rlc_um_test, tx_multiple_SDUs_with_segmentation)
     if (i != 1 && i != 6) {
       byte_buffer pdu;
       for (const byte_buffer_slice& slice : pdu_bufs[i].slices()) {
-        pdu.append(slice);
+        EXPECT_TRUE(pdu.append(slice));
       }
       rlc2_rx_lower->handle_pdu(std::move(pdu));
     }
@@ -820,14 +843,14 @@ TEST_P(rlc_um_test, tx_multiple_SDUs_with_segmentation)
   {
     byte_buffer pdu;
     for (const byte_buffer_slice& slice : pdu_bufs[6].slices()) {
-      pdu.append(slice);
+      EXPECT_TRUE(pdu.append(slice));
     }
     rlc2_rx_lower->handle_pdu(std::move(pdu));
   }
   {
     byte_buffer pdu;
     for (const byte_buffer_slice& slice : pdu_bufs[1].slices()) {
-      pdu.append(slice);
+      EXPECT_TRUE(pdu.append(slice));
     }
     rlc2_rx_lower->handle_pdu(std::move(pdu));
   }
@@ -888,8 +911,8 @@ TEST_P(rlc_um_test, reassembly_window_wrap_around)
   uint32_t rx_sdu_idx = 0;
   for (uint32_t i = 0; i < num_sdus; i++) {
     // create and write SDU into upper end
-    rlc_sdu sdu = {construct_sdu(i, sdu_size), 0};
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(
+        test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i), false);
     pcell_worker.run_pending_tasks();
 
     // check buffer state
@@ -901,14 +924,15 @@ TEST_P(rlc_um_test, reassembly_window_wrap_around)
     std::vector<uint8_t> pdu_tmp(payload_len);
     while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
       unsigned          nwritten = rlc1_tx_lower->pull_pdu(pdu_tmp);
-      byte_buffer_chain tx_pdu   = byte_buffer_slice{span<uint8_t>(pdu_tmp.data(), nwritten)};
+      byte_buffer_chain tx_pdu =
+          byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{pdu_tmp.data(), nwritten}).value()).value();
       if (tx_pdu.empty()) {
         break;
       }
 
       byte_buffer rx_pdu;
       for (const byte_buffer_slice& slice : tx_pdu.slices()) {
-        rx_pdu.append(slice);
+        EXPECT_TRUE(rx_pdu.append(slice));
       }
       rlc2_rx_lower->handle_pdu(std::move(rx_pdu));
 
@@ -919,7 +943,8 @@ TEST_P(rlc_um_test, reassembly_window_wrap_around)
       while (!tester2.sdu_queue.empty() && rx_sdu_idx < num_sdus) {
         byte_buffer_chain& rx_sdu = tester2.sdu_queue.front();
         EXPECT_EQ(sdu_size, rx_sdu.length());
-        EXPECT_TRUE(rx_sdu == construct_sdu(rx_sdu_idx, sdu_size));
+        EXPECT_TRUE(rx_sdu ==
+                    test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i));
         tester2.sdu_queue.pop();
         rx_sdu_idx++;
       }
@@ -951,8 +976,8 @@ TEST_P(rlc_um_test, lost_PDU_outside_reassembly_window)
   uint32_t rx_sdu_idx = 0;
   for (uint32_t i = 0; i < num_sdus; i++) {
     // create and write SDU into upper end
-    rlc_sdu sdu = {construct_sdu(i, sdu_size), 0};
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(
+        test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i), false);
     pcell_worker.run_pending_tasks();
 
     // check buffer state
@@ -964,7 +989,8 @@ TEST_P(rlc_um_test, lost_PDU_outside_reassembly_window)
     std::vector<uint8_t> pdu_tmp(payload_len);
     while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
       unsigned          nwritten = rlc1_tx_lower->pull_pdu(pdu_tmp);
-      byte_buffer_chain tx_pdu   = byte_buffer_slice{span<uint8_t>(pdu_tmp.data(), nwritten)};
+      byte_buffer_chain tx_pdu =
+          byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{pdu_tmp.data(), nwritten}).value()).value();
       if (tx_pdu.empty()) {
         break;
       }
@@ -972,7 +998,7 @@ TEST_P(rlc_um_test, lost_PDU_outside_reassembly_window)
       if (num_pdus != 10 && num_pdus != 21) {
         byte_buffer rx_pdu;
         for (const byte_buffer_slice& slice : tx_pdu.slices()) {
-          rx_pdu.append(slice);
+          EXPECT_TRUE(rx_pdu.append(slice));
         }
         rlc2_rx_lower->handle_pdu(std::move(rx_pdu));
       } else {
@@ -987,7 +1013,8 @@ TEST_P(rlc_um_test, lost_PDU_outside_reassembly_window)
       while (!tester2.sdu_queue.empty() && rx_sdu_idx < num_sdus) {
         byte_buffer_chain& rx_sdu = tester2.sdu_queue.front();
         EXPECT_EQ(sdu_size, rx_sdu.length());
-        EXPECT_TRUE(rx_sdu == construct_sdu(rx_sdu_idx, sdu_size));
+        EXPECT_TRUE(rx_sdu ==
+                    test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i));
         tester2.sdu_queue.pop();
         rx_sdu_idx++;
       }
@@ -1020,15 +1047,10 @@ TEST_P(rlc_um_test, lost_segment_outside_reassembly_window)
   // Push SDUs into RLC1
   byte_buffer sdu_bufs[num_sdus];
   for (uint32_t i = 0; i < num_sdus; i++) {
-    sdu_bufs[i] = byte_buffer();
-    // Write the index into the buffer
-    for (uint32_t k = 0; k < sdu_size; ++k) {
-      ASSERT_TRUE(sdu_bufs[i].append(i + k));
-    }
+    sdu_bufs[i] = test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i);
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
   }
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), num_sdus * (sdu_size + 1));
@@ -1036,15 +1058,24 @@ TEST_P(rlc_um_test, lost_segment_outside_reassembly_window)
   EXPECT_EQ(tester1.bsr_count, 1);
 
   // Read PDUs from RLC1 with grant of 8 Bytes each
-  const uint32_t    payload_len  = 8;
-  const uint32_t    max_num_pdus = num_sdus * 2; // we need 2 PDUs for each SDU
-  uint32_t          num_pdus     = 0;
-  byte_buffer_chain pdu_bufs[max_num_pdus];
+  const uint32_t    payload_len            = 8;
+  const uint32_t    max_num_pdus           = num_sdus * 2; // we need 2 PDUs for each SDU
+  uint32_t          num_pdus               = 0;
+  byte_buffer_chain pdu_bufs[max_num_pdus] = {
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(), byte_buffer_chain::create().value(),
+  };
 
   std::vector<uint8_t> pdu_tmp(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    unsigned nwritten  = rlc1_tx_lower->pull_pdu(pdu_tmp);
-    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(pdu_tmp.data(), nwritten)};
+    unsigned nwritten = rlc1_tx_lower->pull_pdu(pdu_tmp);
+    pdu_bufs[num_pdus] =
+        byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{pdu_tmp.data(), nwritten}).value()).value();
 
     if (pdu_bufs[num_pdus].empty()) {
       break;
@@ -1062,7 +1093,7 @@ TEST_P(rlc_um_test, lost_segment_outside_reassembly_window)
     if (i != 2) {
       byte_buffer pdu;
       for (const byte_buffer_slice& slice : pdu_bufs[i].slices()) {
-        pdu.append(slice);
+        EXPECT_TRUE(pdu.append(slice));
       }
       rlc2_rx_lower->handle_pdu(std::move(pdu));
     }
@@ -1099,15 +1130,10 @@ TEST_P(rlc_um_test, out_of_order_segments_across_SDUs)
   // Push SDUs into RLC1
   byte_buffer sdu_bufs[num_sdus];
   for (uint32_t i = 0; i < num_sdus; i++) {
-    sdu_bufs[i] = byte_buffer();
-    // Write the index into the buffer
-    for (uint32_t k = 0; k < sdu_size; ++k) {
-      ASSERT_TRUE(sdu_bufs[i].append(i + k));
-    }
+    sdu_bufs[i] = test_helpers::create_pdcp_pdu(config.tx.pdcp_sn_len, /* is_srb = */ false, i, sdu_size, i);
 
     // write SDU into upper end
-    rlc_sdu sdu = {sdu_bufs[i].deep_copy(), i}; // no std::move - keep local copy for later comparison
-    rlc1_tx_upper->handle_sdu(std::move(sdu));
+    rlc1_tx_upper->handle_sdu(sdu_bufs[i].deep_copy().value(), false); // keep local copy for later comparison
   }
   pcell_worker.run_pending_tasks();
   EXPECT_EQ(rlc1_tx_lower->get_buffer_state(), num_sdus * (sdu_size + 1));
@@ -1115,15 +1141,27 @@ TEST_P(rlc_um_test, out_of_order_segments_across_SDUs)
   EXPECT_EQ(tester1.bsr_count, 1);
 
   // Read PDUs from RLC1 with grant smaller than SDU size
-  const uint32_t    payload_len  = 10;
-  const uint32_t    max_num_pdus = 10;
-  uint32_t          num_pdus     = 0;
-  byte_buffer_chain pdu_bufs[max_num_pdus];
+  const uint32_t    payload_len            = 10;
+  const uint32_t    max_num_pdus           = 10;
+  uint32_t          num_pdus               = 0;
+  byte_buffer_chain pdu_bufs[max_num_pdus] = {
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+      byte_buffer_chain::create().value(),
+  };
 
   std::vector<uint8_t> pdu_tmp(payload_len);
   while (rlc1_tx_lower->get_buffer_state() > 0 && num_pdus < max_num_pdus) {
-    unsigned nwritten  = rlc1_tx_lower->pull_pdu(pdu_tmp);
-    pdu_bufs[num_pdus] = byte_buffer_slice{span<uint8_t>(pdu_tmp.data(), nwritten)};
+    unsigned nwritten = rlc1_tx_lower->pull_pdu(pdu_tmp);
+    pdu_bufs[num_pdus] =
+        byte_buffer_chain::create(byte_buffer_slice::create(span<uint8_t>{pdu_tmp.data(), nwritten}).value()).value();
 
     if (pdu_bufs[num_pdus].empty()) {
       break;
@@ -1148,7 +1186,7 @@ TEST_P(rlc_um_test, out_of_order_segments_across_SDUs)
   for (uint32_t i = 0; i < num_pdus; i++) {
     byte_buffer pdu;
     for (const byte_buffer_slice& slice : pdu_bufs[order[i]].slices()) {
-      pdu.append(slice);
+      EXPECT_TRUE(pdu.append(slice));
     }
     rlc2_rx_lower->handle_pdu(std::move(pdu));
   }

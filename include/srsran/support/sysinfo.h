@@ -23,6 +23,7 @@
 #pragma once
 
 #include "srsran/srslog/logger.h"
+#include <optional>
 
 namespace srsran {
 
@@ -44,9 +45,15 @@ bool check_drm_kms_polling(srslog::basic_logger& logger);
 ///
 /// \param[in] isol_cpus Set of CPUs to be isolated for the gNB app.
 /// \return True if we were able to configure cgroups through the sysfs.
-bool configure_cgroups(const srsran::os_sched_affinity_bitmask& isol_cpus);
+bool configure_cgroups(const os_sched_affinity_bitmask& isol_cpus);
 
 /// \brief Removes cgroups created by the gNB app.
 void cleanup_cgroups();
+
+/// \brief Check whether custom cgroups are configured in the system.
+///
+/// \return Optional string containing list of custom cgroup paths ('housekeeping' and/or 'isolated') configured in the
+/// system.
+std::optional<std::string> check_cgroups();
 
 } // namespace srsran

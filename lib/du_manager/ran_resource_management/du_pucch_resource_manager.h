@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "cell_group_config.h"
+#include "du_ue_resource_config.h"
 #include "pucch_resource_generator.h"
 #include <set>
 
@@ -37,7 +37,7 @@ class du_pucch_resource_manager
 public:
   explicit du_pucch_resource_manager(span<const du_cell_config> cell_cfg_list_, unsigned max_pucch_grants_per_slot_);
   du_pucch_resource_manager(const du_pucch_resource_manager&)            = delete;
-  du_pucch_resource_manager(du_pucch_resource_manager&&)                 = delete;
+  du_pucch_resource_manager(du_pucch_resource_manager&&)                 = default;
   du_pucch_resource_manager& operator=(const du_pucch_resource_manager&) = delete;
   du_pucch_resource_manager& operator=(du_pucch_resource_manager&&)      = delete;
 
@@ -49,6 +49,8 @@ public:
   void dealloc_resources(cell_group_config& cell_grp_cfg);
 
 private:
+  unsigned sr_du_res_idx_to_pucch_res_idx(unsigned sr_du_res_idx) const;
+
   /// \brief Computes the DU index for PUCCH SR resource from the UE's PUCCH-Config \ref res_id index.
   ///
   /// Each cell has nof_cell_pucch_f1_res_sr PUCCH Format 1 resources that can be used for SR. Within the DU, these
@@ -56,6 +58,8 @@ private:
   /// the PUCCH F1 resources use different indices (see \ref res_id in \ref pucch_resource). The mapping between the DU
   /// index and the UE's PUCCH-Config for SR PUCCH resources is defined in \ref srs_du::ue_pucch_config_builder.
   unsigned pucch_res_idx_to_sr_du_res_idx(unsigned pucch_res_idx) const;
+
+  unsigned csi_du_res_idx_to_pucch_res_idx(unsigned csi_du_res_idx) const;
 
   /// \brief Computes the DU index for PUCCH CSI resource from the UE's PUCCH-Config \ref res_id index.
   ///
@@ -68,6 +72,7 @@ private:
   std::vector<std::pair<unsigned, unsigned>>::const_iterator
   find_optimal_csi_report_slot_offset(const std::vector<std::pair<unsigned, unsigned>>& available_csi_slot_offsets,
                                       unsigned                                          candidate_sr_offset,
+                                      const pucch_resource&                             sr_res_cfg,
                                       const csi_meas_config&                            csi_meas_cfg);
 
   /// Computes the CSI resource ID and offset, under the following constraints: (i) the PUCCH grants counter doesn't
@@ -76,21 +81,27 @@ private:
   std::vector<std::pair<unsigned, unsigned>>::const_iterator
   get_csi_resource_offset(const csi_meas_config&                            csi_meas_cfg,
                           unsigned                                          candidate_sr_offset,
+                          const pucch_resource&                             sr_res_cfg,
                           const std::vector<std::pair<unsigned, unsigned>>& free_csi_list);
 
   /// Computes the SR and CSI PUCCH offsets and their repetitions within a given period, which is the Least Common
   /// Multiple of SR and CSI periods. If SR and CSI results in having common offsets, this will be counted only once.
   std::set<unsigned> compute_sr_csi_pucch_offsets(unsigned sr_offset, unsigned csi_offset = 0);
 
+  [[nodiscard]] bool csi_offset_collides_with_sr(unsigned sr_offset, unsigned csi_offset) const;
+
+  /// Called when PUCCH allocation fails for a given UE.
+  void disable_pucch_cfg(cell_group_config& cell_grp_cfg);
+
   // Parameters for PUCCH configuration passed by the user.
-  const pucch_builder_params        user_defined_pucch_cfg;
-  const std::vector<pucch_resource> default_pucch_res_list;
-  const pucch_config                default_pucch_cfg;
-  const optional<csi_report_config> default_csi_report_cfg;
-  const unsigned                    max_pucch_grants_per_slot;
-  unsigned                          lcm_csi_sr_period;
-  unsigned                          sr_period_slots  = 0;
-  unsigned                          csi_period_slots = 0;
+  const pucch_builder_params             user_defined_pucch_cfg;
+  const std::vector<pucch_resource>      default_pucch_res_list;
+  const pucch_config                     default_pucch_cfg;
+  const std::optional<csi_report_config> default_csi_report_cfg;
+  const unsigned                         max_pucch_grants_per_slot;
+  unsigned                               lcm_csi_sr_period;
+  unsigned                               sr_period_slots  = 0;
+  unsigned                               csi_period_slots = 0;
 
   struct cell_resource_context {
     /// \brief Pool of PUCCH SR offsets currently available to be allocated to UEs. Each element is represented by a

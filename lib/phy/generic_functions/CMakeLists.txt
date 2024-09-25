@@ -19,6 +19,7 @@
 #
 
 add_subdirectory(precoding)
+add_subdirectory(transform_precoding)
 
 # Initialise DFT sources and definitions for DFT libraries.
 set(SRSRAN_DFT_SOURCES dft_processor_generic_impl.cpp)
@@ -48,6 +49,4 @@ add_library(srsran_generic_funcs STATIC generic_functions_factories.cpp)
 set_source_files_properties(generic_functions_factories.cpp PROPERTIES COMPILE_DEFINITIONS "${SRSRAN_DFT_DEFINITIONS}")
 target_link_libraries(srsran_generic_funcs srsran_generic_funcs_dft srslog)
 
-install(TARGETS srsran_generic_funcs
-        srsran_generic_funcs_dft
-        EXPORT srsran_export)
+add_to_exported_libs(srsran_generic_funcs srsran_generic_funcs_dft)

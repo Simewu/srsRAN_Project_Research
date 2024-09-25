@@ -33,6 +33,7 @@
 #include "srsran/ran/slot_point.h"
 #include "srsran/ran/uci/uci_constants.h"
 #include "srsran/ran/uci/uci_part2_size_description.h"
+#include <variant>
 
 namespace srsran {
 
@@ -81,12 +82,43 @@ public:
     float beta_offset_csi_part2;
   };
 
+  /// Collects the DM-RS parameters.
+  struct dmrs_configuration {
+    /// Indicates the DM-RS type.
+    dmrs_type dmrs;
+    /// \brief Parameter \f$N^{n_{SCID}}_{ID}\f$ TS38.211 Section 6.4.1.1.1.
+    ///
+    /// It is equal to:
+    /// - a value in {0,1, ... ,65535} given by the higher-layer parameters \e scramblingID0 and \e scramblingID1,
+    /// - \f$N^{cell}_{ID}\f$ otherwise.
+    unsigned scrambling_id;
+    /// \brief Parameter \f$n_{SCID}\f$ from TS 38.211 section 6.4.1.1.1.
+    ///
+    /// It is equal to:
+    /// - \c true or \c false according to the DM-RS sequence initialization field, in the DCI associated with the PUSCH
+    /// transmission if DCI format 0_1 is used,
+    /// - \c false otherwise.
+    bool n_scid;
+    /// Number of DM-RS CDM groups without data.
+    unsigned nof_cdm_groups_without_data;
+  };
+
+  /// Collects the DM-RS parameters when transform precoding is enabled.
+  struct dmrs_transform_precoding_configuration {
+    /// \brief Parameter \f$n^{RS}_{ID}\f$ TS38.211 Section 6.4.1.1.2.
+    ///
+    /// It is equal to:
+    /// - a value in {0,1, ... ,1007} given by the higher-layer parameter \e nPUSCH-Identity, or
+    /// - \f$N^{cell}_{ID}\f$.
+    unsigned n_rs_id;
+  };
+
   /// \brief Describes the PUSCH processing parameters.
   ///
   /// For a valid PUSCH transmission the codeword, the UCI information or both must be present.
   struct pdu_t {
     /// Context information.
-    optional<pusch_context> context;
+    std::optional<pusch_context> context;
     /// Indicates the slot and numerology.
     slot_point slot;
     /// Provides \f$n_{RNTI}\f$ from TS 38.211 section 6.3.1.1 Scrambling.
@@ -100,7 +132,7 @@ public:
     /// Modulation and coding scheme.
     sch_mcs_description mcs_descr;
     /// Provides codeword description if present.
-    optional<codeword_description> codeword;
+    std::optional<codeword_description> codeword;
     /// Uplink control information parameters.
     uci_description uci;
     /// \brief Parameter \f$n_{ID}\f$ from TS 38.211 section 6.3.1.1.
@@ -115,40 +147,25 @@ public:
     static_vector<uint8_t, MAX_PORTS> rx_ports;
     /// Indicates which symbol in the slot transmit DMRS.
     symbol_slot_mask dmrs_symbol_mask;
-    /// Indicates the DMRS type.
-    dmrs_type dmrs;
-    /// \brief Parameter \f$N^{n_{SCID}}_{ID}\f$ TS 38.211 section 6.4.1.1.1.
-    ///
-    /// It is equal to:
-    /// - {0,1, … ,65535} given by the higher-layer parameters scramblingID0 and scramblingID1,
-    /// - \f$N^{cell}_{ID}\f$ otherwise.
-    unsigned scrambling_id;
-    /// \brief Parameter \f$n_{SCID}\f$ from TS 38.211 section 6.4.1.1.1.
-    ///
-    /// It is equal to:
-    /// - \c true or \c false according DM-RS sequence initialization field, in the DCI associated with the PUSCH
-    /// transmission if DCI format 0_1 is used,
-    /// - \c false otherwise.
-    bool n_scid;
-    /// Number of DMRS CDM groups without data.
-    unsigned nof_cdm_groups_without_data;
+    /// DM-RS configuration.
+    std::variant<dmrs_configuration, dmrs_transform_precoding_configuration> dmrs;
     /// Frequency domain allocation.
     rb_allocation freq_alloc;
     /// Time domain allocation start symbol index (0...12).
     unsigned start_symbol_index;
     /// Time domain allocation number of symbols (1...14).
     unsigned nof_symbols;
-    /// \brief Limits codeblock encoding circular buffer in bytes.
+    /// \brief Transport block size for limited buffer rate match.
     ///
-    /// Parameter \f$TBS_{LBRM}\f$ from 3GPP TS 38.212 section 5.4.2.1, for computing the size of the circular buffer.
-    /// \remark Use <tt> ldpc::MAX_CODEBLOCK_SIZE / 8 </tt> for maximum length.
+    /// Parameter \f$TBS_{LBRM}\f$ from 3GPP TS38.212 section 5.4.2.1, for computing the size of the circular buffer.
+    /// \remark Use <tt> tbs_lbrm_default </tt> for maximum length.
     /// \remark Zero is reserved.
-    unsigned tbs_lbrm_bytes;
+    units::bytes tbs_lbrm;
     /// \brief Direct current position.
     ///
     /// Sets the direct current position relative to Point A.
     /// \remark An assertion is triggered if the DC position is not within the resource grid.
-    optional<unsigned> dc_position;
+    std::optional<unsigned> dc_position;
   };
 
   /// Default destructor.

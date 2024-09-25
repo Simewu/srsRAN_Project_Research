@@ -41,6 +41,7 @@ set(PUSCH_PROCESSOR_LIBRARIES srsran_phy_support
         srsran_channel_equalizer
         srsran_channel_precoder
         srsran_channel_processors
+        srsran_transform_precoding
         srslog
         srsvec)
 
@@ -50,4 +51,4 @@ if (ENABLE_PUSCH_HWACC)
 endif (ENABLE_PUSCH_HWACC)
 
 target_link_libraries(pusch_processor_benchmark ${PUSCH_PROCESSOR_LIBRARIES})
-add_test(pusch_processor_benchmark pusch_processor_benchmark -m silent -R 1 -B 1 -T 2 -P pusch_scs15_5MHz_qpsk_min)
+add_test(pusch_processor_benchmark pusch_processor_benchmark -m silent -R 1 -B 1 -T 2 -P scs15_5MHz_qpsk_rv0_1port_1layer)

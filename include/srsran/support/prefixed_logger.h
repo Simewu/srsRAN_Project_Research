@@ -27,23 +27,26 @@
 
 namespace srsran {
 
-/// Class used to store common logging parameters for all types RLC entities.
-/// It provides logging helpers, so that the UE index and LCID are always logged.
-///
-/// \param log_name name of the logger we want to use (e.g. RLC, PDCP, etc.)
-/// \param du_index UE identifier within the DU
-/// \param lcid LCID for the bearer
+/// This utility class allows adding a prefix string to all log entries generated using the provided methods.
 template <typename Prefix>
 class prefixed_logger
 {
+  srslog::basic_logger&              logger;
+  std::shared_ptr<const std::string> log_label;
+
 public:
-  prefixed_logger(const std::string& log_name, Prefix prefix_, const char* prefix_separator_ = "") :
-    logger(srslog::fetch_basic_logger(log_name, false)), prefix(prefix_), prefix_separator(prefix_separator_)
+  prefixed_logger(const std::string& log_name, Prefix prefix, const char* prefix_separator = "") :
+    logger(srslog::fetch_basic_logger(log_name, false))
   {
+    set_prefix(prefix, prefix_separator);
   }
 
-  void   set_prefix(Prefix prefix_) { prefix = prefix_; }
-  Prefix get_prefix() const { return prefix; }
+  void set_prefix(Prefix prefix, const char* prefix_separator = "")
+  {
+    fmt::memory_buffer buffer;
+    fmt::format_to(buffer, "{}{}", prefix, prefix_separator);
+    log_label = std::make_shared<const std::string>(fmt::to_string(buffer));
+  }
 
   template <typename... Args>
   void log_debug(const char* fmt, Args&&... args) const
@@ -83,7 +86,7 @@ public:
         log_error(fmt, std::forward<Args>(args)...);
         break;
       case srslog::basic_levels::none:
-        // skip
+        // Skip.
         break;
       default:
         log_warning("Unsupported log level: {}", basic_level_to_string(level));
@@ -129,7 +132,7 @@ public:
         log_error(it_begin, it_end, fmt, std::forward<Args>(args)...);
         break;
       case srslog::basic_levels::none:
-        // skip
+        // Skip.
         break;
       default:
         log_warning("Unsupported log level: {}", basic_level_to_string(level));
@@ -195,7 +198,7 @@ public:
         log_error(msg, len, fmt, std::forward<Args>(args)...);
         break;
       case srslog::basic_levels::none:
-        // skip
+        // Skip.
         break;
       default:
         log_warning("Unsupported log level: {}", basic_level_to_string(level));
@@ -206,41 +209,22 @@ public:
   srslog::basic_logger& get_basic_logger() { return logger; }
 
 private:
-  srslog::basic_logger& logger;
-  Prefix                prefix;
-  const char*           prefix_separator;
-
   template <typename... Args>
   void log_helper(srslog::log_channel& channel, const char* fmt, Args&&... args) const
   {
-    if (!channel.enabled()) {
-      return;
-    }
-    fmt::memory_buffer buffer;
-    fmt::format_to(buffer, fmt, std::forward<Args>(args)...);
-    channel("{}{}{}", prefix, prefix_separator, to_c_str(buffer));
+    channel(log_label, fmt, std::forward<Args>(args)...);
   }
 
   template <typename It, typename... Args>
   void log_helper(It it_begin, It it_end, srslog::log_channel& channel, const char* fmt, Args&&... args) const
   {
-    if (!channel.enabled()) {
-      return;
-    }
-    fmt::memory_buffer buffer;
-    fmt::format_to(buffer, fmt, std::forward<Args>(args)...);
-    channel(it_begin, it_end, "{}{}{}", prefix, prefix_separator, to_c_str(buffer));
+    channel(log_label, it_begin, it_end, fmt, std::forward<Args>(args)...);
   }
 
   template <typename... Args>
   void log_helper(const uint8_t* msg, size_t len, srslog::log_channel& channel, const char* fmt, Args&&... args) const
   {
-    if (!channel.enabled()) {
-      return;
-    }
-    fmt::memory_buffer buffer;
-    fmt::format_to(buffer, fmt, std::forward<Args>(args)...);
-    channel(msg, len, "{}{}{}", prefix, prefix_separator, to_c_str(buffer));
+    channel(log_label, msg, len, fmt, std::forward<Args>(args)...);
   }
 };
 

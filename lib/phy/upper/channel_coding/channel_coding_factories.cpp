@@ -49,6 +49,7 @@
 #endif // __x86_64__
 
 #ifdef __ARM_NEON
+#include "crc_calculator_neon_impl.h"
 #include "ldpc/ldpc_decoder_neon.h"
 #include "ldpc/ldpc_encoder_neon.h"
 #include "ldpc/ldpc_rate_dematcher_neon_impl.h"
@@ -77,6 +78,14 @@ public:
       return std::make_unique<crc_calculator_clmul_impl>(poly);
     }
 #endif // __x86_64__
+
+#ifdef __aarch64__
+    bool supports_pmull = cpu_supports_feature(cpu_feature::neon) && cpu_supports_feature(cpu_feature::pmull);
+
+    if (((type == "auto") || (type == "neon")) && supports_pmull) {
+      return std::make_unique<crc_calculator_neon_impl>(poly);
+    }
+#endif // __aarch64__
 
     if ((type == "auto") || (type == "lut")) {
       return std::make_unique<crc_calculator_lut_impl>(poly);
@@ -167,7 +176,8 @@ public:
   {
 #ifdef __x86_64__
     bool supports_avx2   = cpu_supports_feature(cpu_feature::avx2);
-    bool supports_avx512 = cpu_supports_feature(cpu_feature::avx512f) && cpu_supports_feature(cpu_feature::avx512bw);
+    bool supports_avx512 = cpu_supports_feature(cpu_feature::avx512f) && cpu_supports_feature(cpu_feature::avx512bw) &&
+                           cpu_supports_feature(cpu_feature::avx512vbmi);
 
     if (((dematcher_type == "avx512") || (dematcher_type == "auto")) && supports_avx512) {
       return std::make_unique<ldpc_rate_dematcher_avx512_impl>();

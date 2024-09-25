@@ -19,7 +19,7 @@
 #
 
 [tool.pytest.ini_options]
-addopts = "--tb=short --random-order --random-order-bucket=class"
+addopts = "--tb=short --random-order --random-order-bucket=class --log-folder=./log --html=./log/report.html --self-contained-html --junitxml=out.xml"
 filterwarnings = [
   "ignore:HTTPResponse.getheaders:DeprecationWarning",
 ]
@@ -46,18 +46,20 @@ markers = [
   "rf_not_crash",
   "reattach",
   "test",
+  "zmq_2x2_mimo",
   "zmq_4x4_mimo",
   "zmq_srsue",
   "test_mode",
+  "test_mode_not_crash",
   "viavi",
   "viavi_manual",
+  "viavi_debug",
 ]
 minversion = "6.0"
 python_files = [
   "tests/*.py",
 ]
 render_collapsed = true
-reruns_delay = 60
 
 [tool.black]
 line-length = 120
@@ -80,7 +82,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.pylint]
-disable = ["fixme", "no-name-in-module", "duplicate-code", "import-error"]
+disable = ["no-name-in-module", "duplicate-code", "import-error"]
 ignore-signatures = true
 max-line-length = 120
 

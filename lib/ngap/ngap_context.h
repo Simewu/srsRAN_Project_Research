@@ -22,7 +22,11 @@
 
 #pragma once
 
+#include "srsran/cu_cp/cu_cp_configuration.h"
 #include "srsran/ngap/ngap_types.h"
+#include "srsran/ran/gnb_id.h"
+#include "srsran/ran/plmn_identity.h"
+#include <chrono>
 #include <string>
 
 namespace srsran {
@@ -31,13 +35,11 @@ namespace srs_cu_cp {
 
 /// \brief NGAP context
 struct ngap_context_t {
-  unsigned             gnb_id = 0;
-  std::string          ran_node_name;
-  std::string          plmn; /// Full PLMN as string (without possible filler digit) e.g. "00101"
-  unsigned             tac;
-  std::vector<guami_t> served_guami_list;
-  guami_t              current_guami;
-  std::chrono::seconds ue_context_setup_timeout_s; // timeout for ue context setup in seconds
+  gnb_id_t                             gnb_id = {0, 22};
+  std::string                          ran_node_name;
+  std::vector<supported_tracking_area> supported_tas;
+  std::vector<guami_t>                 served_guami_list;
+  std::chrono::seconds                 pdu_session_setup_timeout; // timeout for PDU context setup in seconds
 };
 
 } // namespace srs_cu_cp

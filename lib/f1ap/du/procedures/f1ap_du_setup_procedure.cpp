@@ -24,7 +24,8 @@
 #include "../f1ap_du_context.h"
 #include "srsran/asn1/f1ap/common.h"
 #include "srsran/f1ap/common/f1ap_message.h"
-#include "srsran/ran/bcd_helpers.h"
+#include "srsran/ran/band_helper.h"
+#include "srsran/ran/bcd_helper.h"
 #include "srsran/support/async/async_timer.h"
 
 using namespace srsran;
@@ -81,6 +82,9 @@ void f1ap_du_setup_procedure::operator()(coro_context<async_task<f1_setup_respon
 
 void f1ap_du_setup_procedure::send_f1_setup_request()
 {
+  // Save the gNB-DU-Id before the F1 Setup is completed for the purpose of logging.
+  du_ctxt.du_id = request.gnb_du_id;
+
   f1ap_message msg = {};
   // set F1AP PDU contents
   msg.pdu.set_init_msg();
@@ -90,7 +94,7 @@ void f1ap_du_setup_procedure::send_f1_setup_request()
   setup_req->transaction_id = transaction.id();
 
   // DU-global parameters.
-  setup_req->gnb_du_id           = request.gnb_du_id;
+  setup_req->gnb_du_id           = static_cast<uint64_t>(request.gnb_du_id);
   setup_req->gnb_du_name_present = not request.gnb_du_name.empty();
   if (setup_req->gnb_du_name_present) {
     setup_req->gnb_du_name.from_string(request.gnb_du_name);
@@ -106,31 +110,50 @@ void f1ap_du_setup_procedure::send_f1_setup_request()
 
     // Fill Served PLMNs
     f1ap_cell.served_cell_info.served_plmns.resize(1);
-    f1ap_cell.served_cell_info.served_plmns[0].plmn_id.from_number(plmn_string_to_bcd(cell_cfg.nr_cgi.plmn));
+    auto plmn_bytes                                    = cell_cfg.nr_cgi.plmn_id.to_bytes();
+    f1ap_cell.served_cell_info.served_plmns[0].plmn_id = plmn_bytes;
+
+    // Fill slicing information.
+    f1ap_cell.served_cell_info.served_plmns[0].ie_exts_present                        = not cell_cfg.slices.empty();
+    f1ap_cell.served_cell_info.served_plmns[0].ie_exts.tai_slice_support_list_present = not cell_cfg.slices.empty();
+    for (const s_nssai_t& s_nssai : cell_cfg.slices) {
+      slice_support_item_s slice{};
+      slice.snssai.sst.from_number(s_nssai.sst);
+      slice.snssai.sd_present = s_nssai.sd.has_value();
+      if (slice.snssai.sd_present) {
+        slice.snssai.sd.from_number(*s_nssai.sd);
+      }
+      f1ap_cell.served_cell_info.served_plmns[0].ie_exts.tai_slice_support_list.push_back(slice);
+    }
 
     // Fill Served Cell Information.
-    f1ap_cell.served_cell_info.nr_pci = cell_cfg.pci;
-    f1ap_cell.served_cell_info.nr_cgi.plmn_id.from_number(plmn_string_to_bcd(cell_cfg.nr_cgi.plmn));
-    f1ap_cell.served_cell_info.nr_cgi.nr_cell_id.from_number(cell_cfg.nr_cgi.nci);
+    f1ap_cell.served_cell_info.nr_pci         = cell_cfg.pci;
+    f1ap_cell.served_cell_info.nr_cgi.plmn_id = plmn_bytes;
+    f1ap_cell.served_cell_info.nr_cgi.nr_cell_id.from_number(cell_cfg.nr_cgi.nci.value());
     f1ap_cell.served_cell_info.five_gs_tac_present = true;
     f1ap_cell.served_cell_info.five_gs_tac.from_number(cell_cfg.tac);
+    const unsigned nof_crbs = band_helper::get_n_rbs_from_bw(
+        MHz_to_bs_channel_bandwidth(cell_cfg.dl_carrier.carrier_bw_mhz), cell_cfg.scs_common, frequency_range::FR1);
+    const double absolute_freq_point_a = band_helper::get_abs_freq_point_a_from_f_ref(
+        band_helper::nr_arfcn_to_freq(cell_cfg.dl_carrier.arfcn_f_ref), nof_crbs, cell_cfg.scs_common);
     if (cell_cfg.duplx_mode == duplex_mode::TDD) {
       tdd_info_s& tdd           = f1ap_cell.served_cell_info.nr_mode_info.set_tdd();
-      tdd.nr_freq_info.nr_arfcn = cell_cfg.dl_carrier.arfcn;
+      tdd.nr_freq_info.nr_arfcn = band_helper::freq_to_nr_arfcn(absolute_freq_point_a);
       tdd.nr_freq_info.freq_band_list_nr.resize(1);
       tdd.nr_freq_info.freq_band_list_nr[0].freq_band_ind_nr = nr_band_to_uint(cell_cfg.dl_carrier.band);
 
       tdd.tx_bw.nr_scs.value = (nr_scs_opts::options)to_numerology_value(cell_cfg.scs_common);
-      unsigned nof_crbs      = band_helper::get_n_rbs_from_bw(
-          MHz_to_bs_channel_bandwidth(cell_cfg.dl_carrier.carrier_bw_mhz), cell_cfg.scs_common, frequency_range::FR1);
+
       bool res = asn1::number_to_enum(tdd.tx_bw.nr_nrb, nof_crbs);
       srsran_assert(res, "Invalid number of CRBs for DL carrier BW");
     } else {
       fdd_info_s& fdd              = f1ap_cell.served_cell_info.nr_mode_info.set_fdd();
-      fdd.dl_nr_freq_info.nr_arfcn = cell_cfg.dl_carrier.arfcn;
+      fdd.dl_nr_freq_info.nr_arfcn = band_helper::freq_to_nr_arfcn(absolute_freq_point_a);
       fdd.dl_nr_freq_info.freq_band_list_nr.resize(1);
       fdd.dl_nr_freq_info.freq_band_list_nr[0].freq_band_ind_nr = nr_band_to_uint(cell_cfg.dl_carrier.band);
-      fdd.ul_nr_freq_info.nr_arfcn                              = cell_cfg.ul_carrier->arfcn;
+      const double ul_absolute_freq_point_a                     = band_helper::get_abs_freq_point_a_from_f_ref(
+          band_helper::nr_arfcn_to_freq(cell_cfg.ul_carrier->arfcn_f_ref), nof_crbs, cell_cfg.scs_common);
+      fdd.ul_nr_freq_info.nr_arfcn = band_helper::freq_to_nr_arfcn(ul_absolute_freq_point_a);
       fdd.ul_nr_freq_info.freq_band_list_nr.resize(1);
       fdd.ul_nr_freq_info.freq_band_list_nr[0].freq_band_ind_nr = nr_band_to_uint(cell_cfg.ul_carrier->band);
 
@@ -198,40 +221,46 @@ f1_setup_response_message f1ap_du_setup_procedure::create_f1_setup_result()
 
   if (not transaction.valid()) {
     // Transaction could not be allocated.
-    logger.error("F1 Setup: Procedure cancelled. Cause: Failed to allocate transaction.");
-    res.success = false;
+    logger.error("{}: Procedure cancelled. Cause: Failed to allocate transaction.", name());
+    res.result    = f1_setup_response_message::result_code::proc_failure;
+    du_ctxt.du_id = gnb_du_id_t::invalid;
     return res;
   }
   if (transaction.aborted()) {
     // Abortion/timeout case.
-    logger.error("F1 Setup: Procedure cancelled. Cause: Timeout reached.");
-    res.success = false;
+    logger.error("{}: Procedure cancelled. Cause: Timeout reached.", name());
+    res.result    = f1_setup_response_message::result_code::timeout;
+    du_ctxt.du_id = gnb_du_id_t::invalid;
     return res;
   }
   const f1ap_transaction_response& cu_pdu_response = transaction.response();
 
   if (cu_pdu_response.has_value() and cu_pdu_response.value().value.type().value ==
                                           f1ap_elem_procs_o::successful_outcome_c::types_opts::f1_setup_resp) {
-    res.success = true;
+    res.result = f1_setup_response_message::result_code::success;
 
     // Update F1 DU Context (taking values from request).
-    du_ctxt.gnb_du_id   = request.gnb_du_id;
+    du_ctxt.du_id       = request.gnb_du_id;
     du_ctxt.gnb_du_name = request.gnb_du_name;
     du_ctxt.served_cells.resize(request.served_cells.size());
     for (unsigned i = 0; i != du_ctxt.served_cells.size(); ++i) {
       du_ctxt.served_cells[i].nr_cgi = request.served_cells[i].nr_cgi;
     }
 
-    logger.info("F1 Setup: Procedure completed successfully.");
+    logger.info("{}: Procedure completed successfully.", name());
 
   } else if (cu_pdu_response.has_value() and cu_pdu_response.error().value.type().value !=
                                                  f1ap_elem_procs_o::unsuccessful_outcome_c::types_opts::f1_setup_fail) {
-    logger.error("Received PDU with unexpected PDU type {}", cu_pdu_response.value().value.type().to_string());
-    res.success = false;
+    logger.error(
+        "{}: Received PDU with unexpected PDU type {}", name(), cu_pdu_response.value().value.type().to_string());
+    res.result    = f1_setup_response_message::result_code::invalid_response;
+    du_ctxt.du_id = gnb_du_id_t::invalid;
   } else {
-    logger.debug("Received PDU with unsuccessful outcome cause={}",
-                 get_cause_str(cu_pdu_response.error().value.f1_setup_fail()->cause));
-    res.success = false;
+    const auto& fail           = *cu_pdu_response.error().value.f1_setup_fail();
+    res.result                 = f1_setup_response_message::result_code::f1_setup_failure;
+    res.f1_setup_failure_cause = get_cause_str(fail.cause);
+    logger.debug("{}: F1 Setup Failure with cause \"{}\"", name(), get_cause_str(fail.cause));
+    du_ctxt.du_id = gnb_du_id_t::invalid;
   }
   return res;
 }

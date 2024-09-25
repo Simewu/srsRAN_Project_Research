@@ -199,9 +199,9 @@ public:
 
   /// \brief Keeps popping and discarding elements until the \c stop_condition returns true.
   /// \param[in] stop_condition Callable with signature "bool(const T&)" that checks if the discarding can be halted.
-  /// \return The element for which \c stop_condition returned true if it exists. Nullopt otherwise.
+  /// \return The element for which \c stop_condition returned true if it exists. std::nullopt otherwise.
   template <typename StopCondition>
-  optional<T> pop_and_discard_until(const StopCondition& stop_condition)
+  std::optional<T> pop_and_discard_until(const StopCondition& stop_condition)
   {
     return pop_and_discard_until_(stop_condition);
   }
@@ -324,7 +324,7 @@ protected:
       cvar_empty.notify_one();
       return {};
     }
-    return std::move(t);
+    return make_unexpected(std::move(t));
   }
 
   template <typename It, typename BlockingMode>
@@ -425,9 +425,9 @@ protected:
   }
 
   template <typename StopCondition>
-  optional<T> pop_and_discard_until_(const StopCondition& cond)
+  std::optional<T> pop_and_discard_until_(const StopCondition& cond)
   {
-    optional<T>                  ret{};
+    std::optional<T>             ret{};
     bool                         notify_needed = false;
     std::unique_lock<std::mutex> lock(mutex);
     while (wait_pop_possible(lock, non_blocking_tag{})) {
@@ -457,9 +457,7 @@ protected:
 /// \tparam T value type stored by buffer
 /// \tparam PushingCallback function void(const T&) called while pushing an element to the queue
 /// \tparam PoppingCallback function void(const T&) called while popping an element from the queue
-template <typename T,
-          typename PushingCallback = detail::noop_operation,
-          typename PoppingCallback = detail::noop_operation>
+template <typename T, typename PushingCallback = noop_operation, typename PoppingCallback = noop_operation>
 class blocking_queue : public detail::base_blocking_queue<ring_buffer<T, true>, PushingCallback, PoppingCallback>
 {
   using super_type = detail::base_blocking_queue<ring_buffer<T, true>, PushingCallback, PoppingCallback>;
@@ -480,10 +478,7 @@ public:
 /// \tparam N size of queue
 /// \tparam PushingCallback function void(const T&) called while pushing an element to the queue
 /// \tparam PoppingCallback function void(const T&) called while popping an element from the queue
-template <typename T,
-          size_t N,
-          typename PushingCallback = detail::noop_operation,
-          typename PoppingCallback = detail::noop_operation>
+template <typename T, size_t N, typename PushingCallback = noop_operation, typename PoppingCallback = noop_operation>
 class static_blocking_queue
   : public detail::base_blocking_queue<static_ring_buffer<T, N>, PushingCallback, PoppingCallback>
 {

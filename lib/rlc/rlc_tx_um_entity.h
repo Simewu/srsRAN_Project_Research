@@ -68,8 +68,6 @@ private:
   const uint32_t head_len_first;
   const uint32_t head_len_not_first;
 
-  task_executor& pcell_executor;
-
   pcap_rlc_pdu_context pcap_context;
 
   // Storage for previous buffer state
@@ -82,19 +80,31 @@ private:
   std::atomic_flag pending_buffer_state = ATOMIC_FLAG_INIT;
 
 public:
-  rlc_tx_um_entity(uint32_t                             du_index,
+  rlc_tx_um_entity(gnb_du_id_t                          gnb_du_id,
                    du_ue_index_t                        ue_index,
-                   rb_id_t                              rb_id,
+                   rb_id_t                              rb_id_,
                    const rlc_tx_um_config&              config,
                    rlc_tx_upper_layer_data_notifier&    upper_dn_,
                    rlc_tx_upper_layer_control_notifier& upper_cn_,
                    rlc_tx_lower_layer_notifier&         lower_dn_,
+                   rlc_metrics_aggregator&              metrics_agg_,
+                   rlc_pcap&                            pcap_,
                    task_executor&                       pcell_executor_,
-                   bool                                 metrics_enabled,
-                   rlc_pcap&                            pcap_);
+                   task_executor&                       ue_executor_,
+                   timer_manager&                       timers);
+
+  void stop() final
+  {
+    // Stop all timers. Any queued handlers of timers that just expired before this call are canceled automatically
+    if (not stopped) {
+      high_metrics_timer.stop();
+      low_metrics_timer.stop();
+      stopped = true;
+    }
+  }
 
   // Interfaces for higher layers
-  void handle_sdu(rlc_sdu sdu_) override;
+  void handle_sdu(byte_buffer sdu_buf, bool is_retx) override;
   void discard_sdu(uint32_t pdcp_sn) override;
 
   // Interfaces for lower layers
@@ -124,6 +134,8 @@ private:
   void update_mac_buffer_state();
 
   void log_state(srslog::basic_levels level) { logger.log(level, "TX entity state. {} next_so={}", st, next_so); }
+
+  bool stopped = false;
 };
 
 } // namespace srsran

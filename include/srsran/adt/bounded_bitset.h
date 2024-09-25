@@ -503,7 +503,7 @@ public:
   /// \return The result of the bitset product.
   /// \remark The current implementation supports only a bitset containing one word. An assertion is triggered if \c
   /// other contains more than one word.
-  template <unsigned Factor>
+  template <unsigned long Factor>
   bounded_bitset<Factor * N> kronecker_product(const bounded_bitset<Factor>& other) const
   {
     static_assert(Factor <= bits_per_word,
@@ -982,7 +982,10 @@ public:
   void from_uint64(uint64_t v)
   {
     srsran_assert(nof_words_() == 1, "ERROR: cannot convert bitset of size='{}' to uint64_t", size());
-    srsran_assert(v < (1U << size()), "ERROR: Provided mask='{}' does not fit in bitset of size='{}'", v, size());
+    srsran_assert(v < (static_cast<uint64_t>(1U) << size()),
+                  "ERROR: Provided mask='{}' does not fit in bitset of size='{}'",
+                  v,
+                  size());
     buffer[0] = v;
   }
 

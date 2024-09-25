@@ -80,25 +80,23 @@ TEST_P(pdcp_tx_test, pdu_gen)
     // Set state of PDCP entiy
     pdcp_tx_state st = {tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->configure_security(sec_cfg);
-    pdcp_tx->set_integrity_protection(security::integrity_enabled::on);
-    pdcp_tx->set_ciphering(security::ciphering_enabled::on);
+    pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     // Write SDU
-    byte_buffer sdu = {sdu1};
+    byte_buffer sdu = byte_buffer::create(sdu1).value();
     pdcp_tx->handle_sdu(std::move(sdu));
 
     // Get generated PDU
     ASSERT_EQ(test_frame.pdu_queue.size(), 1);
-    pdcp_tx_pdu pdu = std::move(test_frame.pdu_queue.front());
+    byte_buffer pdu = std::move(test_frame.pdu_queue.front());
     test_frame.pdu_queue.pop();
 
     // Get expected PDU
     byte_buffer exp_pdu;
     get_expected_pdu(tx_next, exp_pdu);
 
-    ASSERT_EQ(pdu.buf.length(), exp_pdu.length());
-    ASSERT_EQ(pdu.buf, exp_pdu);
+    ASSERT_EQ(pdu.length(), exp_pdu.length());
+    ASSERT_EQ(pdu, exp_pdu);
   };
 
   if (config.sn_size == pdcp_sn_size::size12bits) {
@@ -125,9 +123,7 @@ TEST_P(pdcp_tx_test, pdu_stall)
     // Set state of PDCP entiy
     pdcp_tx_state st = {tx_next, tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->configure_security(sec_cfg);
-    pdcp_tx->set_integrity_protection(security::integrity_enabled::on);
-    pdcp_tx->set_ciphering(security::ciphering_enabled::on);
+    pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     uint32_t sdu_queue_size = 4096;
     uint32_t window_size    = pdcp_window_size(sn_size);
@@ -135,17 +131,17 @@ TEST_P(pdcp_tx_test, pdu_stall)
 
     // Write SDU
     for (uint32_t count = tx_next; count < tx_next + stall; ++count) {
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
 
       // Check there is a new PDU
       ASSERT_EQ(test_frame.pdu_queue.size(), 1);
-      pdcp_tx_pdu pdu = std::move(test_frame.pdu_queue.front());
+      byte_buffer pdu = std::move(test_frame.pdu_queue.front());
       test_frame.pdu_queue.pop();
     }
     {
       // Write an SDU that should be dropped
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
 
       // Check there is no new PDU
@@ -156,7 +152,7 @@ TEST_P(pdcp_tx_test, pdu_stall)
       pdcp_tx->handle_transmit_notification(pdcp_compute_sn(tx_next + stall - 1, sn_size));
 
       // Write an SDU that should be dropped
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
 
       // Check there is no new PDU
@@ -189,18 +185,18 @@ TEST_P(pdcp_tx_test, discard_timer_and_expiry)
     // Set state of PDCP entiy
     pdcp_tx_state st = {tx_next, tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->configure_security(sec_cfg);
+    pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     // Write first SDU
     {
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
       pdcp_tx->handle_transmit_notification(pdcp_compute_sn(tx_next, sn_size));
       ASSERT_EQ(1, pdcp_tx->nof_discard_timers());
     }
     // Write second SDU
     {
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
       pdcp_tx->handle_transmit_notification(pdcp_compute_sn(tx_next + 1, sn_size));
       ASSERT_EQ(2, pdcp_tx->nof_discard_timers());
@@ -236,13 +232,13 @@ TEST_P(pdcp_tx_test, discard_timer_and_stop)
   auto test_discard_timer_stop = [this](pdcp_tx_state st) {
     // Set state of PDCP entiy
     pdcp_tx->set_state(st);
-    pdcp_tx->configure_security(sec_cfg);
+    pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     constexpr uint32_t nof_sdus = 5;
 
     // Write SDUs
     for (uint32_t i = 0; i < nof_sdus; i++) {
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
       pdcp_tx->handle_transmit_notification(pdcp_compute_sn(st.tx_next, sn_size));
       ASSERT_EQ(i + 1, pdcp_tx->nof_discard_timers());
@@ -314,9 +310,7 @@ TEST_P(pdcp_tx_test, pdu_stall_with_discard)
     // Set state of PDCP entiy
     pdcp_tx_state st = {tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->configure_security(sec_cfg);
-    pdcp_tx->set_integrity_protection(security::integrity_enabled::on);
-    pdcp_tx->set_ciphering(security::ciphering_enabled::on);
+    pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     uint32_t sdu_queue_size = 4096;
     uint32_t window_size    = pdcp_window_size(sn_size);
@@ -324,17 +318,17 @@ TEST_P(pdcp_tx_test, pdu_stall_with_discard)
 
     // Write SDU
     for (uint32_t count = tx_next; count < tx_next + stall; ++count) {
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
 
       // Check there is a new PDU
       ASSERT_EQ(test_frame.pdu_queue.size(), 1);
-      pdcp_tx_pdu pdu = std::move(test_frame.pdu_queue.front());
+      byte_buffer pdu = std::move(test_frame.pdu_queue.front());
       test_frame.pdu_queue.pop();
     }
     {
       // Write an SDU that should be dropped
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
 
       // Check there is no new PDU
@@ -349,17 +343,17 @@ TEST_P(pdcp_tx_test, pdu_stall_with_discard)
 
     // Check that we can write PDUs again
     for (uint32_t count = tx_next + stall; count < tx_next + 2 * stall; ++count) {
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
 
       // Check there is a new PDU
       ASSERT_EQ(test_frame.pdu_queue.size(), 1);
-      pdcp_tx_pdu pdu = std::move(test_frame.pdu_queue.front());
+      byte_buffer pdu = std::move(test_frame.pdu_queue.front());
       test_frame.pdu_queue.pop();
     }
     {
       // Write an SDU that should be dropped
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
 
       // Check there is no new PDU
@@ -370,7 +364,7 @@ TEST_P(pdcp_tx_test, pdu_stall_with_discard)
       pdcp_tx->handle_transmit_notification(pdcp_compute_sn(tx_next + 2 * stall - 1, sn_size));
 
       // Write an SDU that should not be dropped
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
 
       // Check there is a new PDU
@@ -411,11 +405,11 @@ TEST_P(pdcp_tx_test, count_wraparound)
     // Set state of PDCP entiy
     pdcp_tx_state st = {tx_next, tx_next};
     pdcp_tx->set_state(st);
-    pdcp_tx->configure_security(sec_cfg);
+    pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     // Write first SDU
     for (uint32_t i = 0; i < n_sdus; i++) {
-      byte_buffer sdu = {sdu1};
+      byte_buffer sdu = byte_buffer::create(sdu1).value();
       pdcp_tx->handle_sdu(std::move(sdu));
       pdcp_tx->handle_transmit_notification(pdcp_compute_sn(st.tx_next + i, sn_size));
     }
@@ -438,27 +432,29 @@ TEST_P(pdcp_tx_test, count_wraparound)
 TEST_P(pdcp_tx_test_short_rlc_queue, discard_on_full_rlc_sdu_queue)
 {
   init(GetParam());
-  byte_buffer sdu = {sdu1};
+  pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
+
+  byte_buffer sdu = byte_buffer::create(sdu1).value();
 
   // Fill the RLC SDU queue
   for (uint32_t i = 0; i < config.custom.rlc_sdu_queue; i++) {
-    pdcp_tx->handle_sdu(sdu.deep_copy());
+    pdcp_tx->handle_sdu(sdu.deep_copy().value());
     ASSERT_EQ(test_frame.pdu_queue.size(), 1);
     test_frame.pdu_queue.pop();
   }
 
   // Any further SDUs should be discarded and not forwarded to lower layers
-  pdcp_tx->handle_sdu(sdu.deep_copy());
+  pdcp_tx->handle_sdu(sdu.deep_copy().value());
   ASSERT_TRUE(test_frame.pdu_queue.empty());
 
   // Make room for one more SDU and check if one PDU will be passed to lower layers
   pdcp_tx->handle_transmit_notification(0);
-  pdcp_tx->handle_sdu(sdu.deep_copy());
+  pdcp_tx->handle_sdu(sdu.deep_copy().value());
   ASSERT_EQ(test_frame.pdu_queue.size(), 1);
   test_frame.pdu_queue.pop();
 
   // Any further SDUs should be discarded and not forwarded to lower layers
-  pdcp_tx->handle_sdu(sdu.deep_copy());
+  pdcp_tx->handle_sdu(sdu.deep_copy().value());
   ASSERT_TRUE(test_frame.pdu_queue.empty());
 }
 

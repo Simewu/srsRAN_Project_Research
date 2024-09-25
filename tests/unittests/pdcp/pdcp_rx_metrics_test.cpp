@@ -37,9 +37,7 @@ TEST_P(pdcp_rx_metrics_test, sdu_pdu_metrics)
     init(GetParam());
     srsran::test_delimit_logger delimiter("RX PDU/SDU metrics tests. SN_SIZE={} COUNT={}", sn_size, count);
 
-    pdcp_rx->configure_security(sec_cfg);
-    pdcp_rx->set_integrity_protection(security::integrity_enabled::on);
-    pdcp_rx->set_ciphering(security::ciphering_enabled::on);
+    pdcp_rx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     byte_buffer test_pdu;
     get_test_pdu(count, test_pdu);
@@ -50,7 +48,7 @@ TEST_P(pdcp_rx_metrics_test, sdu_pdu_metrics)
 
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu)});
+    pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu)).value());
 
     auto m = pdcp_rx->get_metrics();
     ASSERT_EQ(m.num_pdus, 1);
@@ -87,9 +85,7 @@ TEST_P(pdcp_rx_metrics_test, integrity_metrics)
     srsran::test_delimit_logger delimiter(
         "RX PDU with bad integrity metrics test. SN_SIZE={} COUNT={}", sn_size, count);
 
-    pdcp_rx->configure_security(sec_cfg);
-    pdcp_rx->set_integrity_protection(security::integrity_enabled::on);
-    pdcp_rx->set_ciphering(security::ciphering_enabled::on);
+    pdcp_rx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     byte_buffer test_pdu;
     get_test_pdu(count, test_pdu);
@@ -100,7 +96,7 @@ TEST_P(pdcp_rx_metrics_test, integrity_metrics)
 
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu)});
+    pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu)).value());
 
     auto m = pdcp_rx->get_metrics();
     ASSERT_EQ(m.num_pdus, 1);
@@ -136,9 +132,7 @@ TEST_P(pdcp_rx_metrics_test, rx_reordering_timer)
     srsran::test_delimit_logger delimiter(
         "t-Reordering expiration metrics test. SN_SIZE={} COUNT=[{}, {}]", sn_size, count + 1, count);
 
-    pdcp_rx->configure_security(sec_cfg);
-    pdcp_rx->set_integrity_protection(security::integrity_enabled::on);
-    pdcp_rx->set_ciphering(security::ciphering_enabled::on);
+    pdcp_rx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::on);
 
     byte_buffer test_pdu1;
     get_test_pdu(count, test_pdu1);
@@ -146,7 +140,7 @@ TEST_P(pdcp_rx_metrics_test, rx_reordering_timer)
     get_test_pdu(count + 1, test_pdu2);
     pdcp_rx_state init_state = {.rx_next = count, .rx_deliv = count, .rx_reord = 0};
     pdcp_rx->set_state(init_state);
-    pdcp_rx->handle_pdu(byte_buffer_chain{std::move(test_pdu2)});
+    pdcp_rx->handle_pdu(byte_buffer_chain::create(std::move(test_pdu2)).value());
     ASSERT_EQ(0, test_frame->sdu_queue.size());
     tick_all(10);
     auto m = pdcp_rx->get_metrics();

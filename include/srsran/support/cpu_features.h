@@ -22,9 +22,14 @@
 
 #pragma once
 
+#include "srsran/adt/to_array.h"
 #include "srsran/support/format_utils.h"
 #include "fmt/format.h"
-#include <vector>
+
+#ifdef __aarch64__
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
+#endif // __aarch64__
 
 namespace srsran {
 
@@ -45,6 +50,8 @@ enum class cpu_feature {
   avx512dq,
   /// CPU supports AVX512CD instruction set.
   avx512cd,
+  /// CPU supports AVX512_VBMI instruction set.
+  avx512vbmi,
   /// CPU supports carry-less multiplication instruction PCLMUL.
   pclmul,
   /// CPU supports SSE 4.1.
@@ -57,6 +64,8 @@ enum class cpu_feature {
   ///
   /// NEON is supported if \c __ARM_NEON is defined in compilation time.
   neon,
+  /// CPU supports carry-less multiplication instruction PMULL.
+  pmull,
 #endif // __aarch64__
 };
 
@@ -78,6 +87,8 @@ constexpr const char* to_string(cpu_feature feature)
       return "avx512dq";
     case cpu_feature::avx512cd:
       return "avx512cd";
+    case cpu_feature::avx512vbmi:
+      return "avx512vbmi";
     case cpu_feature::pclmul:
       return "pclmul";
     case cpu_feature::sse4_1:
@@ -88,6 +99,8 @@ constexpr const char* to_string(cpu_feature feature)
 #ifdef __aarch64__
     case cpu_feature::neon:
       return "neon";
+    case cpu_feature::pmull:
+      return "pmull";
 #endif // __aarch64__
   }
   return "invalid_cpu_feature";
@@ -115,6 +128,8 @@ inline bool cpu_supports_feature(cpu_feature feature)
       return __builtin_cpu_supports("avx512dq");
     case cpu_feature::avx512cd:
       return __builtin_cpu_supports("avx512cd");
+    case cpu_feature::avx512vbmi:
+      return __builtin_cpu_supports("avx512vbmi");
     case cpu_feature::pclmul:
       return __builtin_cpu_supports("pclmul");
     case cpu_feature::sse4_1:
@@ -127,13 +142,16 @@ inline bool cpu_supports_feature(cpu_feature feature)
     case cpu_feature::neon:
       return true;
 #endif // __ARM_NEON
+    case cpu_feature::pmull:
+      return getauxval(AT_HWCAP) & HWCAP_PMULL;
 #endif // __aarch64__
     default:
       return false;
   }
 }
 
-static const std::vector<cpu_feature> cpu_features_included = {
+namespace detail {
+constexpr auto cpu_features_included = to_array<cpu_feature>({
 #ifdef __x86_64__
 #ifdef __SSE4_1__
     cpu_feature::sse4_1,
@@ -159,6 +177,9 @@ static const std::vector<cpu_feature> cpu_features_included = {
 #ifdef __AVX512CD__
     cpu_feature::avx512cd,
 #endif // __AVX512CD__
+#ifdef __AVX512VBMI__
+    cpu_feature::avx512vbmi,
+#endif // __AVX512VBMI__
 #ifdef __FMA__
     cpu_feature::fma,
 #endif // __FMA__
@@ -171,12 +192,13 @@ static const std::vector<cpu_feature> cpu_features_included = {
     cpu_feature::neon,
 #endif // __ARM_NEON
 #endif // __aarch64__
-};
+});
+} // namespace detail
 
 inline std::string get_cpu_feature_info()
 {
   fmt::memory_buffer buffer;
-  for (cpu_feature feature : cpu_features_included) {
+  for (cpu_feature feature : detail::cpu_features_included) {
 #ifdef __x86_64__
     format_to(
         buffer, "{}{}{}", buffer.size() == 0 ? "" : " ", feature, cpu_supports_feature(feature) ? "(ok)" : "(na)");
@@ -190,7 +212,7 @@ inline std::string get_cpu_feature_info()
 
 inline bool cpu_supports_included_features()
 {
-  for (cpu_feature feature : cpu_features_included) {
+  for (cpu_feature feature : detail::cpu_features_included) {
     if (!cpu_supports_feature(feature)) {
       return false;
     }

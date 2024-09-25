@@ -40,10 +40,8 @@ public:
   rrc_reconfiguration_procedure(rrc_ue_context_t&                            context_,
                                 const rrc_reconfiguration_procedure_request& args_,
                                 rrc_ue_reconfiguration_proc_notifier&        rrc_ue_notifier_,
-                                rrc_ue_control_notifier&                     ngap_ctrl_notifier_,
-                                rrc_ue_du_processor_notifier&                du_proc_notifier_,
-                                rrc_ue_event_manager&                        ev_mng_,
-                                rrc_ue_srb_handler&                          srb_notifier_,
+                                rrc_ue_event_manager&                        event_mng_,
+                                rrc_ue_control_message_handler&              srb_notifier_,
                                 rrc_ue_logger&                               logger_);
 
   void operator()(coro_context<async_task<bool>>& ctx);
@@ -57,18 +55,15 @@ private:
   rrc_ue_context_t&                           context;
   const rrc_reconfiguration_procedure_request args;
 
-  rrc_ue_reconfiguration_proc_notifier& rrc_ue; // handler to the parent RRC UE object
-  rrc_ue_control_notifier&              ngap_ctrl_notifier;
-  rrc_ue_du_processor_notifier&         du_processor_notifier; // to release the UE if it couldn't be found in the NGAP
-  rrc_ue_event_manager&                 event_mng;             // event manager for the RRC UE entity
-  rrc_ue_srb_handler&                   srb_notifier;          // For creating SRBs
+  rrc_ue_reconfiguration_proc_notifier& rrc_ue;       // handler to the parent RRC UE object
+  rrc_ue_event_manager&                 event_mng;    // event manager for the RRC UE entity
+  rrc_ue_control_message_handler&       srb_notifier; // For creating SRBs
   rrc_ue_logger&                        logger;
 
   rrc_transaction               transaction;
   eager_async_task<rrc_outcome> task;
 
-  bool release_request_sent = false;
-  bool procedure_result     = false;
+  bool procedure_result = false;
 };
 
 } // namespace srs_cu_cp

@@ -41,8 +41,10 @@ public:
   const char* name() const { return "UE Configuration"; }
 
 private:
-  /// \brief Update DU UE bearers. This stage includes the creation/modification/removal of SRBs/DRBs, creation of RLC
-  /// and F1-U bearers.
+  // Stop activity in DRBs that need to be replaced.
+  async_task<void> stop_drbs_to_rem();
+  // Update DU UE bearers. This stage includes the creation/modification/removal of SRBs/DRBs, creation of RLC
+  // and F1-U bearers.
   void update_ue_context();
   void clear_old_ue_context();
 
@@ -50,6 +52,7 @@ private:
   async_task<mac_ue_reconfiguration_response> update_mac_mux_and_demux();
 
   f1ap_ue_context_update_response make_ue_config_response();
+  f1ap_ue_context_update_response make_empty_ue_config_response();
   f1ap_ue_context_update_response make_ue_config_failure();
 
   const f1ap_ue_context_update_request request;
@@ -60,7 +63,9 @@ private:
   du_ue*                ue     = nullptr;
   ue_procedure_logger   proc_logger;
 
-  cell_group_config prev_cell_group;
+  // Snapshot of the UE resources at the start of the UE configuration procedure.
+  du_ue_resource_config          prev_ue_res_cfg;
+  du_ue_resource_update_response ue_res_cfg_resp;
 
   // SRBs that were actually added during the configuration.
   static_vector<srb_id_t, MAX_NOF_SRBS> srbs_added;

@@ -89,10 +89,9 @@ public:
 
 /// Helper class to initialize and store relevant objects for the test and provide helper methods.
 struct sib_test_bench {
-  const bwp_id_t          bwp_id           = to_bwp_id(0);
-  srslog::basic_logger&   sched_logger     = srslog::fetch_basic_logger("SCHED", true);
-  srslog::basic_logger&   test_logger      = srslog::fetch_basic_logger("TEST");
-  scheduler_result_logger sched_res_logger = scheduler_result_logger{true};
+  const bwp_id_t        bwp_id       = to_bwp_id(0);
+  srslog::basic_logger& sched_logger = srslog::fetch_basic_logger("SCHED", true);
+  srslog::basic_logger& test_logger  = srslog::fetch_basic_logger("TEST");
 
   const scheduler_expert_config            sched_cfg;
   const scheduler_si_expert_config&        si_cfg{sched_cfg.si};
@@ -100,6 +99,7 @@ struct sib_test_bench {
   cell_configuration                       cfg{sched_cfg, cfg_msg};
   cell_resource_allocator                  res_grid{cfg};
   dummy_pdcch_resource_allocator           pdcch_sch;
+  scheduler_result_logger                  sched_res_logger{true, cfg_msg.pci};
   slot_point                               sl_tx;
 
   // Test bench ctor for SIB1 scheduler test use. It allows us to set single parameters.
@@ -182,15 +182,15 @@ struct sib_test_bench {
   {
     cell_config_builder_params cell_cfg{};
     if (duplx_mode == srsran::duplex_mode::FDD) {
-      cell_cfg.dl_arfcn = init_bwp_scs == subcarrier_spacing::kHz15 ? 536020 : 176300;
-      cell_cfg.band     = band_helper::get_band_from_dl_arfcn(cell_cfg.dl_arfcn);
+      cell_cfg.dl_f_ref_arfcn = init_bwp_scs == subcarrier_spacing::kHz15 ? 536020 : 176300;
+      cell_cfg.band           = band_helper::get_band_from_dl_arfcn(cell_cfg.dl_f_ref_arfcn);
     } else {
       // Random ARFCN that must be in FR1 and > 3GHz.
-      cell_cfg.dl_arfcn = init_bwp_scs == subcarrier_spacing::kHz15 ? 286400 : 465000;
-      cell_cfg.band     = init_bwp_scs == subcarrier_spacing::kHz15 ? nr_band::n50 : nr_band::n40;
+      cell_cfg.dl_f_ref_arfcn = init_bwp_scs == subcarrier_spacing::kHz15 ? 286400 : 465000;
+      cell_cfg.band           = init_bwp_scs == subcarrier_spacing::kHz15 ? nr_band::n50 : nr_band::n40;
     }
     cell_cfg.scs_common          = init_bwp_scs;
-    cell_cfg.channel_bw_mhz      = static_cast<bs_channel_bandwidth_fr1>(carrier_bw_mhz);
+    cell_cfg.channel_bw_mhz      = static_cast<bs_channel_bandwidth>(carrier_bw_mhz);
     cell_cfg.coreset0_index      = (pdcch_config_sib1 >> 4U) & 0b00001111U;
     cell_cfg.search_space0_index = pdcch_config_sib1 & 0b00001111U;
 
@@ -220,18 +220,18 @@ struct sib_test_bench {
                                                                                   uint16_t           carrier_bw_mhz)
   {
     cell_config_builder_params cell_cfg{};
-    cell_cfg.dl_arfcn       = freq_arfcn;
+    cell_cfg.dl_f_ref_arfcn = freq_arfcn;
     cell_cfg.scs_common     = init_bwp_scs;
-    cell_cfg.band           = band_helper::get_band_from_dl_arfcn(cell_cfg.dl_arfcn);
-    cell_cfg.channel_bw_mhz = static_cast<bs_channel_bandwidth_fr1>(carrier_bw_mhz);
+    cell_cfg.band           = band_helper::get_band_from_dl_arfcn(cell_cfg.dl_f_ref_arfcn);
+    cell_cfg.channel_bw_mhz = static_cast<bs_channel_bandwidth>(carrier_bw_mhz);
 
     const unsigned nof_crbs = band_helper::get_n_rbs_from_bw(
         cell_cfg.channel_bw_mhz,
         cell_cfg.scs_common,
         cell_cfg.band.has_value() ? band_helper::get_freq_range(cell_cfg.band.value()) : frequency_range::FR1);
 
-    optional<band_helper::ssb_coreset0_freq_location> ssb_freq_loc =
-        band_helper::get_ssb_coreset0_freq_location(cell_cfg.dl_arfcn,
+    std::optional<band_helper::ssb_coreset0_freq_location> ssb_freq_loc =
+        band_helper::get_ssb_coreset0_freq_location(cell_cfg.dl_f_ref_arfcn,
                                                     *cell_cfg.band,
                                                     nof_crbs,
                                                     cell_cfg.scs_common,
@@ -333,10 +333,8 @@ void test_sib1_scheduler(subcarrier_spacing                         scs_common,
   // Run the test for 10000 slots.
   const size_t test_length_slots = 10000;
   for (size_t sl_idx = 0; sl_idx < test_length_slots; sl_idx++) {
-    t_bench.sched_res_logger.on_slot_start();
-
     // Run SIB1 scheduler.
-    sib1_sched.schedule_sib1(t_bench.get_slot_res_grid(), t_bench.sl_tx);
+    sib1_sched.run_slot(t_bench.res_grid, t_bench.sl_tx);
 
     auto& res_slot_grid = t_bench.get_slot_res_grid();
 
@@ -398,10 +396,8 @@ void test_sib1_periodicity(sib1_rtx_periodicity sib1_rtx_period, ssb_periodicity
   // Run the test for 10000 slots.
   const size_t test_length_slots = 10000;
   for (size_t sl_idx = 0; sl_idx < test_length_slots; sl_idx++) {
-    t_bench.sched_res_logger.on_slot_start();
-
     // Run SIB1 scheduler.
-    sib1_sched.schedule_sib1(t_bench.get_slot_res_grid(), t_bench.sl_tx);
+    sib1_sched.run_slot(t_bench.res_grid, t_bench.sl_tx);
 
     auto& res_slot_grid = t_bench.get_slot_res_grid();
 
@@ -450,8 +446,6 @@ void test_ssb_sib1_collision(uint32_t           freq_arfcn,
   // Run the test for 10000 slots.
   const size_t test_length_slots = 100;
   for (size_t sl_idx = 0; sl_idx < test_length_slots; sl_idx++) {
-    t_bench.sched_res_logger.on_slot_start();
-
     // Clear the SSB list of it is not empty.
     auto& ssb_list = t_bench.get_slot_res_grid().result.dl.bc.ssb_info;
     if (not ssb_list.empty()) {
@@ -462,7 +456,7 @@ void test_ssb_sib1_collision(uint32_t           freq_arfcn,
     ssb_sched.schedule_ssb(t_bench.get_slot_res_grid());
 
     // Run SIB1 scheduler.
-    sib1_sched.schedule_sib1(t_bench.get_slot_res_grid(), t_bench.sl_tx);
+    sib1_sched.run_slot(t_bench.res_grid, t_bench.sl_tx);
 
     auto& res_slot_grid = t_bench.get_slot_res_grid();
 
@@ -485,7 +479,7 @@ void test_sib_1_pdsch_collisions(unsigned freq_arfcn, subcarrier_spacing scs, ui
   srsran_assert(carrier_bw_mhz >= min_channel_bandwidth_to_MHz(min_ch_bw), "Invalid carrier BW");
 
   const auto nof_rbs_bpw =
-      band_helper::get_n_rbs_from_bw(static_cast<bs_channel_bandwidth_fr1>(carrier_bw_mhz),
+      band_helper::get_n_rbs_from_bw(static_cast<bs_channel_bandwidth>(carrier_bw_mhz),
                                      scs,
                                      band_helper::get_freq_range(band_helper::get_band_from_dl_arfcn(freq_arfcn)));
 
@@ -700,7 +694,7 @@ protected:
     msg.tdd_ul_dl_cfg_common = tdd_cfg;
     // Generate PDSCH Time domain allocation based on the partial slot TDD configuration.
     msg.dl_cfg_common.init_dl_bwp.pdsch_common.pdsch_td_alloc_list = config_helpers::make_pdsch_time_domain_resource(
-        msg.searchspace0, msg.dl_cfg_common.init_dl_bwp.pdcch_common, nullopt, tdd_cfg);
+        msg.searchspace0, msg.dl_cfg_common.init_dl_bwp.pdcch_common, std::nullopt, tdd_cfg);
 
     sib_test_bench t_bench{msg, sib1_rtx_period};
 
@@ -716,8 +710,8 @@ protected:
     const unsigned expected_sib1_period_slots = expected_sib1_period_ms * t_bench.sl_tx.nof_slots_per_subframe();
 
     // NOTE: The function assumes that arguments provided results in SIB1 scheduler allocating SIB1 in partial slot.
-    const unsigned     sib1_allocation_slot_pattern1{tdd_cfg.pattern1.nof_dl_slots};
-    optional<unsigned> sib1_allocation_slot_pattern2;
+    const unsigned          sib1_allocation_slot_pattern1{tdd_cfg.pattern1.nof_dl_slots};
+    std::optional<unsigned> sib1_allocation_slot_pattern2;
     if (tdd_cfg.pattern2.has_value()) {
       sib1_allocation_slot_pattern2 = tdd_cfg.pattern2->nof_dl_slots;
     }
@@ -725,10 +719,8 @@ protected:
     // Run the test for 10000 slots.
     const size_t test_length_slots = 10000;
     for (size_t sl_idx = 0; sl_idx < test_length_slots; sl_idx++) {
-      t_bench.sched_res_logger.on_slot_start();
-
       // Run SIB1 scheduler.
-      sib1_sched.schedule_sib1(t_bench.get_slot_res_grid(), t_bench.sl_tx);
+      sib1_sched.run_slot(t_bench.res_grid, t_bench.sl_tx);
 
       auto& res_slot_grid = t_bench.get_slot_res_grid();
 

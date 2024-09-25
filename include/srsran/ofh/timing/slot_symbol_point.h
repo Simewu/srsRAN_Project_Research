@@ -44,11 +44,29 @@ public:
     srsran_assert(numerology < NOF_NUMEROLOGIES, "Invalid numerology idx={} passed", unsigned(numerology));
   }
 
+  slot_symbol_point(const slot_symbol_point& symbol_point) :
+    nof_symbols(symbol_point.get_nof_symbols()),
+    numerology(symbol_point.get_numerology()),
+    count_val(symbol_point.to_uint())
+  {
+  }
+  slot_symbol_point& operator=(const slot_symbol_point& symbol_point)
+  {
+    nof_symbols = symbol_point.get_nof_symbols();
+    numerology  = symbol_point.get_numerology();
+    count_val   = symbol_point.to_uint();
+
+    return *this;
+  }
+
   /// Slot point.
   slot_point get_slot() const
   {
     return numerology < NOF_NUMEROLOGIES ? slot_point(numerology, count_val / nof_symbols) : slot_point();
   }
+
+  /// Returns true if the slot symbol point is valid, false otherwise.
+  bool is_valid() const { return nof_symbols != 0 && numerology < NOF_NUMEROLOGIES; }
 
   /// Symbol index in a slot. Value: (0..nof_symbols-1).
   unsigned get_symbol_index() const { return count_val % nof_symbols; }
@@ -59,8 +77,8 @@ public:
   /// Numerology index (0..4).
   unsigned get_numerology() const { return numerology; }
 
-  /// System slot.
-  uint32_t system_slot() const { return count_val; }
+  /// Conversion of slot symbol point to a raw counter.
+  uint32_t to_uint() const { return count_val; }
 
   /// Implementation of the sum operator, where \c jump is represented in number of symbols.
   slot_symbol_point& operator+=(int jump)
@@ -153,7 +171,7 @@ inline int operator-(slot_symbol_point lhs, slot_symbol_point rhs)
                                         get_nof_slots_per_subframe(to_subcarrier_spacing(lhs.get_numerology())) *
                                         lhs.get_nof_symbols();
 
-  int tmp = static_cast<int>(lhs.system_slot()) - static_cast<int>(rhs.system_slot());
+  int tmp = static_cast<int>(lhs.to_uint()) - static_cast<int>(rhs.to_uint());
   if (tmp > (nof_symbols_per_slot_wrap / 2)) {
     return (tmp - nof_symbols_per_slot_wrap);
   }

@@ -40,6 +40,7 @@ public:
   class event_source
   {
   public:
+    /// Radio event sources.
     enum sources {
       /// Default event value meaning it is not set.
       UNDEFINED = 0,
@@ -83,6 +84,7 @@ public:
   class event_type
   {
   public:
+    /// Radio event types.
     enum types {
       /// Default event value meaning it is not set.
       UNDEFINED = 0,
@@ -145,7 +147,7 @@ public:
     /// Indicates the event type.
     event_type type = event_type::UNDEFINED;
     /// Optional - Event timestamp.
-    optional<uint64_t> timestamp;
+    std::optional<uint64_t> timestamp;
   };
 
   /// Notifies a new event that affected the real-time operation of the radio.

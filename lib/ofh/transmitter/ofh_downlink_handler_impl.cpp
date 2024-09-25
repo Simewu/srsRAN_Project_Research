@@ -23,9 +23,11 @@
 #include "ofh_downlink_handler_impl.h"
 #include "helpers.h"
 #include "srsran/instrumentation/traces/du_traces.h"
+#include "srsran/instrumentation/traces/ofh_traces.h"
 #include "srsran/ofh/ofh_error_notifier.h"
 #include "srsran/phy/support/resource_grid_context.h"
 #include "srsran/phy/support/resource_grid_reader.h"
+#include "srsran/phy/support/shared_resource_grid.h"
 
 using namespace srsran;
 using namespace ofh;
@@ -57,24 +59,26 @@ downlink_handler_impl::downlink_handler_impl(const downlink_handler_impl_config&
       to_numerology_value(config.scs)),
   data_flow_cplane(std::move(dependencies.data_flow_cplane)),
   data_flow_uplane(std::move(dependencies.data_flow_uplane)),
-  frame_pool_ptr(dependencies.frame_pool_ptr),
-  frame_pool(*frame_pool_ptr),
+  frame_pool(std::move(dependencies.frame_pool)),
   err_notifier(dummy_err_notifier)
 {
   srsran_assert(data_flow_cplane, "Invalid Control-Plane data flow");
   srsran_assert(data_flow_uplane, "Invalid User-Plane data flow");
-  srsran_assert(frame_pool_ptr, "Invalid frame pool");
+  srsran_assert(frame_pool, "Invalid frame pool");
 }
 
-void downlink_handler_impl::handle_dl_data(const resource_grid_context& context, const resource_grid_reader& grid)
+void downlink_handler_impl::handle_dl_data(const resource_grid_context& context, const shared_resource_grid& grid)
 {
-  srsran_assert(grid.get_nof_ports() <= dl_eaxc.size(),
+  const resource_grid_reader& reader = grid.get_reader();
+  srsran_assert(reader.get_nof_ports() <= dl_eaxc.size(),
                 "Number of RU ports is '{}' and must be equal or greater than the number of cell ports which is '{}'",
                 dl_eaxc.size(),
-                grid.get_nof_ports());
+                reader.get_nof_ports());
+
+  trace_point tp = ofh_tracer.now();
 
   // Clear any stale buffers associated with the context slot.
-  frame_pool.clear_downlink_slot(context.slot, logger);
+  frame_pool->clear_downlink_slot(context.slot, logger);
 
   if (window_checker.is_late(context.slot)) {
     err_notifier.get().on_late_downlink_message({context.slot, sector_id});
@@ -84,6 +88,7 @@ void downlink_handler_impl::handle_dl_data(const resource_grid_context& context,
         context.slot,
         context.sector);
     l1_tracer << instant_trace_event{"handle_dl_data_late", instant_trace_event::cpu_scope::thread};
+    ofh_tracer << trace_event("ofh_handle_dl_late", tp);
     return;
   }
 
@@ -93,14 +98,14 @@ void downlink_handler_impl::handle_dl_data(const resource_grid_context& context,
   cplane_context.direction    = data_direction::downlink;
   cplane_context.symbol_range = tdd_config
                                     ? get_active_tdd_dl_symbols(tdd_config.value(), context.slot.slot_index(), cp)
-                                    : ofdm_symbol_range(0, grid.get_nof_symbols());
+                                    : ofdm_symbol_range(0, reader.get_nof_symbols());
 
   data_flow_uplane_resource_grid_context uplane_context;
   uplane_context.slot         = context.slot;
   uplane_context.sector       = context.sector;
   uplane_context.symbol_range = cplane_context.symbol_range;
 
-  for (unsigned cell_port_id = 0, e = grid.get_nof_ports(); cell_port_id != e; ++cell_port_id) {
+  for (unsigned cell_port_id = 0, e = reader.get_nof_ports(); cell_port_id != e; ++cell_port_id) {
     cplane_context.eaxc = dl_eaxc[cell_port_id];
     // Control-Plane data flow.
     data_flow_cplane->enqueue_section_type_1_message(cplane_context);
@@ -110,4 +115,5 @@ void downlink_handler_impl::handle_dl_data(const resource_grid_context& context,
     uplane_context.eaxc = dl_eaxc[cell_port_id];
     data_flow_uplane->enqueue_section_type_1_message(uplane_context, grid);
   }
+  ofh_tracer << trace_event("ofh_handle_downlink", tp);
 }

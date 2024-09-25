@@ -21,18 +21,18 @@
  */
 
 #include "ue_scheduler_impl.h"
+#include "../logging/scheduler_metrics_handler.h"
 #include "../policy/scheduler_policy_factory.h"
 
 using namespace srsran;
 
 ue_scheduler_impl::ue_scheduler_impl(const scheduler_ue_expert_config& expert_cfg_,
                                      sched_configuration_notifier&     mac_notif,
-                                     scheduler_metrics_handler&        metric_handler,
-                                     scheduler_event_logger&           sched_ev_logger) :
+                                     cell_metrics_handler&             metric_handler_) :
   expert_cfg(expert_cfg_),
-  sched_strategy(create_scheduler_strategy(scheduler_strategy_params{"time_rr", &srslog::fetch_basic_logger("SCHED")})),
+  metrics_handler(metric_handler_),
   ue_alloc(expert_cfg, ue_db, srslog::fetch_basic_logger("SCHED")),
-  event_mng(ue_db, metric_handler, sched_ev_logger),
+  event_mng(ue_db, metrics_handler),
   logger(srslog::fetch_basic_logger("SCHED"))
 {
 }
@@ -40,8 +40,13 @@ ue_scheduler_impl::ue_scheduler_impl(const scheduler_ue_expert_config& expert_cf
 void ue_scheduler_impl::add_cell(const ue_scheduler_cell_params& params)
 {
   ue_res_grid_view.add_cell(*params.cell_res_alloc);
-  cells[params.cell_index] = std::make_unique<cell>(expert_cfg, params, ue_db);
-  event_mng.add_cell(*params.cell_res_alloc, cells[params.cell_index]->srb0_sched);
+  cells[params.cell_index] = std::make_unique<cell>(expert_cfg, params, ue_db, metrics_handler);
+  event_mng.add_cell(*params.cell_res_alloc,
+                     cells[params.cell_index]->cell_harqs,
+                     cells[params.cell_index]->fallback_sched,
+                     cells[params.cell_index]->uci_sched,
+                     *params.ev_logger,
+                     cells[params.cell_index]->slice_sched);
   ue_alloc.add_cell(params.cell_index, *params.pdcch_sched, *params.uci_alloc, *params.cell_res_alloc);
 }
 
@@ -57,15 +62,31 @@ void ue_scheduler_impl::run_sched_strategy(slot_point slot_tx, du_cell_index_t c
     return;
   }
 
+  // Update slice context and compute slice priorities.
+  cells[cell_index]->slice_sched.slot_indication(slot_tx);
+
   // Perform round-robin prioritization of UL and DL scheduling. This gives unfair preference to DL over UL. This is
   // done to avoid the issue of sending wrong DAI value in DCI format 0_1 to UE while the PDSCH is allocated
   // right after allocating PUSCH in the same slot, resulting in gNB expecting 1 HARQ ACK bit to be multiplexed in
   // UCI in PUSCH and UE sending 4 HARQ ACK bits (DAI = 3).
   // Example: K1==K2=4 and PUSCH is allocated before PDSCH.
   if (expert_cfg.enable_csi_rs_pdsch_multiplexing or (*cells[cell_index]->cell_res_alloc)[0].result.dl.csi_rs.empty()) {
-    sched_strategy->dl_sched(ue_alloc, ue_res_grid_view, ue_db);
+    auto dl_slice_candidate = cells[cell_index]->slice_sched.get_next_dl_candidate();
+    while (dl_slice_candidate.has_value()) {
+      auto&                           policy = cells[cell_index]->slice_sched.get_policy(dl_slice_candidate->id());
+      dl_slice_ue_cell_grid_allocator slice_pdsch_alloc{ue_alloc, *dl_slice_candidate};
+      policy.dl_sched(slice_pdsch_alloc, ue_res_grid_view, *dl_slice_candidate);
+      dl_slice_candidate = cells[cell_index]->slice_sched.get_next_dl_candidate();
+    }
   }
-  sched_strategy->ul_sched(ue_alloc, ue_res_grid_view, ue_db);
+
+  auto ul_slice_candidate = cells[cell_index]->slice_sched.get_next_ul_candidate();
+  while (ul_slice_candidate.has_value()) {
+    auto&                           policy = cells[cell_index]->slice_sched.get_policy(ul_slice_candidate->id());
+    ul_slice_ue_cell_grid_allocator slice_pusch_alloc{ue_alloc, *ul_slice_candidate};
+    policy.ul_sched(slice_pusch_alloc, ue_res_grid_view, *ul_slice_candidate);
+    ul_slice_candidate = cells[cell_index]->slice_sched.get_next_ul_candidate();
+  }
 }
 
 void ue_scheduler_impl::update_harq_pucch_counter(cell_resource_allocator& cell_alloc)
@@ -98,8 +119,9 @@ void ue_scheduler_impl::update_harq_pucch_counter(cell_resource_allocator& cell_
       // Each PUCCH grants can potentially carry ACKs for different HARQ processes (as many as the harq_ack_nof_bits)
       // expecting to be acknowledged on the same slot.
       for (unsigned harq_bit_idx = 0; harq_bit_idx != nof_harqs_per_rnti_per_slot; ++harq_bit_idx) {
-        dl_harq_process* h_dl = user->get_pcell().harqs.find_dl_harq_waiting_ack_slot(slot_alloc.slot, harq_bit_idx);
-        if (h_dl == nullptr) {
+        std::optional<dl_harq_process_handle> h_dl =
+            user->get_pcell().harqs.find_dl_harq_waiting_ack(slot_alloc.slot, harq_bit_idx);
+        if (not h_dl.has_value() or not h_dl->is_waiting_ack()) {
           logger.warning(
               "ue={} rnti={}: No DL HARQ process with state waiting-for-ack found at slot={} for harq-bit-index={}",
               user->ue_index,
@@ -160,13 +182,16 @@ void ue_scheduler_impl::run_slot(slot_point slot_tx, du_cell_index_t cell_index)
   event_mng.run(slot_tx, cell_index);
 
   // Mark the start of a new slot in the UE grid allocator.
-  ue_alloc.slot_indication();
+  ue_alloc.slot_indication(slot_tx);
 
   // Schedule periodic UCI (SR and CSI) before any UL grants.
-  cells[cell_index]->uci_sched.run_slot(*cells[cell_index]->cell_res_alloc, slot_tx);
+  cells[cell_index]->uci_sched.run_slot(*cells[cell_index]->cell_res_alloc);
 
   // Run cell-specific SRB0 scheduler.
-  cells[cell_index]->srb0_sched.run_slot(*cells[cell_index]->cell_res_alloc);
+  cells[cell_index]->fallback_sched.run_slot(*cells[cell_index]->cell_res_alloc);
+
+  // Check for timeouts in the cell HARQ processes.
+  cells[cell_index]->cell_harqs.slot_indication(slot_tx);
 
   // Synchronize all carriers. Last thread to reach this synchronization point, runs UE scheduling strategy.
   sync_point.wait(
@@ -177,4 +202,34 @@ void ue_scheduler_impl::run_slot(slot_point slot_tx, du_cell_index_t cell_index)
 
   // TODO: remove this.
   puxch_grant_sanitizer(*cells[cell_index]->cell_res_alloc);
+}
+
+namespace {
+
+class harq_manager_timeout_notifier : public harq_timeout_notifier
+{
+public:
+  explicit harq_manager_timeout_notifier(cell_metrics_handler& metrics_handler_) : metrics_handler(metrics_handler_) {}
+
+  void on_harq_timeout(du_ue_index_t ue_idx, bool is_dl, bool ack) override
+  {
+    metrics_handler.handle_harq_timeout(ue_idx, is_dl);
+  }
+
+private:
+  cell_metrics_handler& metrics_handler;
+};
+
+} // namespace
+
+ue_scheduler_impl::cell::cell(const scheduler_ue_expert_config& expert_cfg,
+                              const ue_scheduler_cell_params&   params,
+                              ue_repository&                    ues,
+                              cell_metrics_handler&             metrics_handler) :
+  cell_res_alloc(params.cell_res_alloc),
+  cell_harqs(MAX_NOF_DU_UES, MAX_NOF_HARQS, std::make_unique<harq_manager_timeout_notifier>(metrics_handler)),
+  uci_sched(params.cell_res_alloc->cfg, *params.uci_alloc, ues),
+  fallback_sched(expert_cfg, params.cell_res_alloc->cfg, *params.pdcch_sched, *params.pucch_alloc, ues),
+  slice_sched(params.cell_res_alloc->cfg, ues)
+{
 }

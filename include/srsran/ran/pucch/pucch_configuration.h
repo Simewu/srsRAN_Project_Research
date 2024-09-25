@@ -28,9 +28,9 @@
 #include "pucch_mapping.h"
 #include "srsran/adt/optional.h"
 #include "srsran/adt/static_vector.h"
-#include "srsran/adt/variant.h"
 #include "srsran/ran/sr_configuration.h"
 #include <cstdint>
+#include <variant>
 #include <vector>
 
 namespace srsran {
@@ -39,9 +39,9 @@ namespace srsran {
 /// \remark See TS 38.331, "maxNrofPUCCH-ResourceSets".
 constexpr size_t MAX_NOF_PUCCH_RESOURCE_SETS = 4;
 
-/// Maximum number of PUCCH resources.
+/// Maximum number of PUCCH resources that can be configured for a UE.
 /// \remark See TS 38.331, "maxNrofPUCCH-Resources".
-constexpr size_t MAX_NOF_PUCCH_RESOURCES = 128;
+constexpr size_t MAX_NOF_UE_PUCCH_RESOURCES = 128;
 
 /// Maximum number of PUCCH Resources per PUCCH-ResourceSet.
 /// \remark See TS 38.331, "maxNrofPUCCH-ResourcesPerSet". Only valid for the first \c pucch_resource_set, see
@@ -161,11 +161,11 @@ struct pucch_format_4_cfg {
 
 /// \c PUCCH-Resource, in \c PUCCH-Config, TS 38.331.
 struct pucch_resource {
-  pucch_res_id_t                                                                            res_id = {0, 0};
-  unsigned                                                                                  starting_prb;
-  optional<unsigned>                                                                        second_hop_prb;
-  pucch_format                                                                              format;
-  variant<pucch_format_0_cfg, pucch_format_1_cfg, pucch_format_2_3_cfg, pucch_format_4_cfg> format_params;
+  pucch_res_id_t                                                                                 res_id = {0, 0};
+  unsigned                                                                                       starting_prb;
+  std::optional<unsigned>                                                                        second_hop_prb;
+  pucch_format                                                                                   format;
+  std::variant<pucch_format_0_cfg, pucch_format_1_cfg, pucch_format_2_3_cfg, pucch_format_4_cfg> format_params;
 
   bool operator==(const pucch_resource& rhs) const
   {
@@ -180,11 +180,11 @@ struct pucch_resource {
 /// \ref pucch_config.
 struct pucch_resource_set {
   /// \c PUCCH-ResourceSetId.
-  uint8_t pucch_res_set_id;
+  pucch_res_set_idx pucch_res_set_id;
   /// \c resourceList.
   static_vector<pucch_res_id_t, MAX_NOF_PUCCH_RESOURCES_PER_PUCCH_RESOURCE_SET> pucch_res_id_list;
   /// \c maxPayloadSize.
-  optional<unsigned> max_payload_size;
+  std::optional<unsigned> max_payload_size;
 
   bool operator==(const pucch_resource_set& rhs) const
   {
@@ -200,18 +200,28 @@ struct pucch_config {
   // NOTE: PUCCH resource set ID 0 can only contain PUCCH format 0 and 1.
   static_vector<pucch_resource_set, MAX_NOF_PUCCH_RESOURCE_SETS> pucch_res_set;
   /// List of \c PUCCH-Resource.
-  static_vector<pucch_resource, MAX_NOF_PUCCH_RESOURCES> pucch_res_list;
+  static_vector<pucch_resource, MAX_NOF_UE_PUCCH_RESOURCES> pucch_res_list;
   /// \c format1 .. \c format4, which contain the parameters that are common to a given PUCCH Format.
-  optional<pucch_common_all_formats> format_1_common_param;
-  optional<pucch_common_all_formats> format_2_common_param;
-  optional<pucch_common_all_formats> format_3_common_param;
-  optional<pucch_common_all_formats> format_4_common_param;
+  std::optional<pucch_common_all_formats> format_1_common_param;
+  std::optional<pucch_common_all_formats> format_2_common_param;
+  std::optional<pucch_common_all_formats> format_3_common_param;
+  std::optional<pucch_common_all_formats> format_4_common_param;
 
   /// List of \c SchedulingRequestResourceConfig.
   static_vector<scheduling_request_resource_config, MAX_NOF_SR_RESOURCES> sr_res_list;
 
   /// \c dl-DataToUL-ACK. Values {0..15}.
   static_vector<uint8_t, 8> dl_data_to_ul_ack;
+
+  /// PUCCH resource max UCI payload, depending on the format. The index defines the format.
+  /// \remark The UCI payload is the same for all UE's PUCCH resources belonging to the same format, regardless of
+  /// whether they are used for HARQ-ACK or CSI.
+  /// \remark For Format 0 and 1, only the max number of HARQ-ACK bits are considered.
+  static_vector<unsigned, 5> format_max_payload{0, 0, 0, 0, 0};
+
+  /// Returns the PUCCH resource max UCI payload for the given format.
+  /// \remark For Format 0 and 1, it returns only the max number of HARQ-ACK bits.
+  unsigned get_max_payload(pucch_format format) const { return format_max_payload[pucch_format_to_uint(format)]; }
 
   bool operator==(const pucch_config& rhs) const
   {

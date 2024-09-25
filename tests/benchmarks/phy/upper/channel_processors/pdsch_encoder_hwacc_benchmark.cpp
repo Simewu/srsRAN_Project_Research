@@ -56,10 +56,11 @@ static bounded_bitset<MAX_NSYMB_PER_SLOT> dmrs_symbol_mask =
     {false, false, true, false, false, false, false, false, false, false, false, false, false, false};
 
 #ifdef DPDK_FOUND
-static bool        cb_mode       = false;
-static std::string hal_log_level = "ERROR";
-static bool        std_out_sink  = true;
-static std::string eal_arguments = "";
+static bool                 dedicated_queue = true;
+static bool                 cb_mode         = false;
+static srslog::basic_levels hal_log_level   = srslog::basic_levels::error;
+static bool                 std_out_sink    = true;
+static std::string          eal_arguments   = "";
 #endif // DPDK_FOUND
 
 // Test profile structure, initialized with default profile values.
@@ -82,9 +83,11 @@ static test_profile selected_profile = {};
 
 static void usage(const char* prog)
 {
-  fmt::print("Usage: {} [-T X] [-e] [-i X] [-x] [-y] [-z error|warning|info|debug] [-h] [eal_args ...]\n", prog);
+  fmt::print("Usage: {} [-T X] [-e] [-i X] [-w] [-x] [-y] [-z error|warning|info|debug] [-h] [eal_args ...]\n", prog);
   fmt::print("\t-T       PDSCH encoder type [generic,acc100][Default {}]\n", hwacc_encoder_type);
 #ifdef DPDK_FOUND
+  fmt::print("\t-w       Force shared hardware-queue use [Default {}]\n",
+             dedicated_queue ? "dedicated_queue" : "shared_queue");
   fmt::print("\t-x       Force TB mode [Default {}]\n", cb_mode ? "cb_mode" : "tb_mode");
   fmt::print("\t-y       Force logging output written to a file [Default {}]\n", std_out_sink ? "std_out" : "file");
   fmt::print("\t-z       Set logging level for the HAL [Default {}]\n", hal_log_level);
@@ -129,21 +132,26 @@ static std::string capture_eal_args(int* argc, char*** argv)
 static int parse_args(int argc, char** argv)
 {
   int opt = 0;
-  while ((opt = getopt(argc, argv, "T:xyz:h")) != -1) {
+  while ((opt = getopt(argc, argv, "T:wxyz:h")) != -1) {
     switch (opt) {
       case 'T':
         hwacc_encoder_type = std::string(optarg);
         break;
 #ifdef DPDK_FOUND
+      case 'w':
+        dedicated_queue = false;
+        break;
       case 'x':
         cb_mode = true;
         break;
       case 'y':
         std_out_sink = false;
         break;
-      case 'z':
-        hal_log_level = std::string(optarg);
+      case 'z': {
+        auto level    = srslog::str_to_basic_level(std::string(optarg));
+        hal_log_level = level.has_value() ? level.value() : srslog::basic_levels::error;
         break;
+      }
 #endif // DPDK_FOUND
       case 'h':
       default:
@@ -183,13 +191,20 @@ static std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory> create_hw_accelera
   srslog::set_default_sink(*log_sink);
   srslog::init();
   srslog::basic_logger& logger = srslog::fetch_basic_logger("HAL", false);
-  logger.set_level(srslog::str_to_basic_level(hal_log_level));
+  logger.set_level(hal_log_level);
 
   // Pointer to a dpdk-based hardware-accelerator interface.
   static std::unique_ptr<dpdk::dpdk_eal> dpdk_interface = nullptr;
   if (!dpdk_interface) {
     dpdk_interface = dpdk::create_dpdk_eal(eal_arguments, logger);
     TESTASSERT(dpdk_interface, "Failed to open DPDK EAL with arguments.");
+  }
+
+  // Create a bbdev accelerator factory.
+  static std::unique_ptr<dpdk::bbdev_acc_factory> bbdev_acc_factory = nullptr;
+  if (!bbdev_acc_factory) {
+    bbdev_acc_factory = srsran::dpdk::create_bbdev_acc_factory("srs");
+    TESTASSERT(bbdev_acc_factory, "Failed to create the bbdev accelerator factory.");
   }
 
   // Intefacing to the bbdev-based hardware-accelerator.
@@ -199,16 +214,19 @@ static std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory> create_hw_accelera
   bbdev_config.nof_ldpc_dec_lcores                   = 0;
   bbdev_config.nof_fft_lcores                        = 0;
   bbdev_config.nof_mbuf                              = static_cast<unsigned>(pow2(log2_ceil(MAX_NOF_SEGMENTS)));
-  std::shared_ptr<dpdk::bbdev_acc> bbdev_accelerator = create_bbdev_acc(bbdev_config, logger);
+  std::shared_ptr<dpdk::bbdev_acc> bbdev_accelerator = bbdev_acc_factory->create(bbdev_config, logger);
   TESTASSERT(bbdev_accelerator);
 
-  // Set the hardware-accelerator configuration.
-  hw_accelerator_pdsch_enc_configuration hw_encoder_config;
+  // Set the PDSCH encoder hardware-accelerator factory configuration for the ACC100.
+  hal::bbdev_hwacc_pdsch_enc_factory_configuration hw_encoder_config;
   hw_encoder_config.acc_type          = "acc100";
   hw_encoder_config.bbdev_accelerator = bbdev_accelerator;
+  hw_encoder_config.cb_mode           = cb_mode;
+  hw_encoder_config.max_tb_size       = RTE_BBDEV_LDPC_E_MAX_MBUF;
+  hw_encoder_config.dedicated_queue   = dedicated_queue;
 
   // ACC100 hardware-accelerator implementation.
-  return create_hw_accelerator_pdsch_enc_factory(hw_encoder_config);
+  return srsran::hal::create_bbdev_pdsch_enc_acc_factory(hw_encoder_config, "srs");
 #else  // DPDK_FOUND
   return nullptr;
 #endif // DPDK_FOUND
@@ -227,10 +245,6 @@ static std::shared_ptr<pdsch_encoder_factory> create_acc100_pdsch_encoder_factor
 
   // Set the hardware-accelerated PDSCH encoder configuration.
   pdsch_encoder_factory_hw_configuration encoder_hw_factory_config;
-#ifdef DPDK_FOUND
-  encoder_hw_factory_config.cb_mode     = cb_mode;
-  encoder_hw_factory_config.max_tb_size = RTE_BBDEV_LDPC_E_MAX_MBUF;
-#endif // DPDK_FOUND
   encoder_hw_factory_config.crc_factory        = crc_calc_factory;
   encoder_hw_factory_config.segmenter_factory  = segmenter_factory;
   encoder_hw_factory_config.hw_encoder_factory = hw_encoder_factory;

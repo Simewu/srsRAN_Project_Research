@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "../ngap_asn1_utils.h"
 #include "../ngap_validators/ngap_validators.h"
 #include "../ue_context/ngap_ue_context.h"
 #include "srsran/ngap/ngap.h"
@@ -37,11 +36,9 @@ public:
   ngap_pdu_session_resource_setup_procedure(const cu_cp_pdu_session_resource_setup_request&    request_,
                                             const asn1::ngap::pdu_session_res_setup_request_s& asn1_request_,
                                             const ngap_ue_ids&                                 ue_ids_,
-                                            ngap_rrc_ue_pdu_notifier&                          rrc_ue_pdu_notifier_,
-                                            ngap_du_processor_control_notifier& du_processor_ctrl_notifier_,
-                                            ngap_message_notifier&              amf_notif_,
-                                            ngap_control_message_handler&       ngap_ctrl_handler_,
-                                            ngap_ue_logger&                     logger_);
+                                            ngap_cu_cp_notifier&                               cu_cp_notifier_,
+                                            ngap_message_notifier&                             amf_notif_,
+                                            ngap_ue_logger&                                    logger_);
 
   void operator()(coro_context<async_task<void>>& ctx);
 
@@ -58,11 +55,9 @@ private:
   cu_cp_pdu_session_resource_setup_response         validation_response;
   byte_buffer                                       nas_pdu;
   const ngap_ue_ids                                 ue_ids;
-  ngap_rrc_ue_pdu_notifier&                         rrc_ue_pdu_notifier;
   cu_cp_pdu_session_resource_setup_response         response;
-  ngap_du_processor_control_notifier&               du_processor_ctrl_notifier;
+  ngap_cu_cp_notifier&                              cu_cp_notifier;
   ngap_message_notifier&                            amf_notifier;
-  ngap_control_message_handler&                     ngap_ctrl_handler;
   ngap_ue_logger&                                   logger;
 
   cu_cp_ue_context_release_request ue_context_release_request;

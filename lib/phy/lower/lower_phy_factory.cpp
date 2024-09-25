@@ -85,11 +85,13 @@ public:
 
     const lower_phy_sector_description& sector = config.sectors.front();
 
-    srsran_assert(config.scs < subcarrier_spacing::kHz60,
-                  "Subcarrier spacing of {} is not supported. Only {} and {} are supported.",
+    srsran_assert((config.scs == subcarrier_spacing::kHz15) || (config.scs == subcarrier_spacing::kHz30) ||
+                      (config.scs == subcarrier_spacing::kHz120),
+                  "Subcarrier spacing of {} is not supported. Only {}, {} and {} are supported.",
                   to_string(config.scs),
                   to_string(subcarrier_spacing::kHz15),
-                  to_string(subcarrier_spacing::kHz30));
+                  to_string(subcarrier_spacing::kHz30),
+                  to_string(subcarrier_spacing::kHz120));
     unsigned nof_samples_per_slot = config.srate.to_kHz() / pow2(to_numerology_value(config.scs));
 
     unsigned tx_buffer_size = config.bb_gateway->get_transmitter_optimal_buffer_size();
@@ -142,7 +144,6 @@ public:
     dl_proc_config.center_frequency_Hz     = sector.dl_freq_hz;
     dl_proc_config.nof_tx_ports            = sector.nof_tx_ports;
     dl_proc_config.nof_slot_tti_in_advance = config.max_processing_delay_slots;
-    dl_proc_config.logger                  = config.logger;
 
     // Create downlink processor.
     std::unique_ptr<lower_phy_downlink_processor> dl_proc = downlink_proc_factory->create(dl_proc_config);
@@ -196,6 +197,7 @@ public:
     lower_phy_config.rx_symbol_notifier = config.rx_symbol_notifier;
     lower_phy_config.timing_notifier    = config.timing_notifier;
     lower_phy_config.error_notifier     = config.error_notifier;
+    lower_phy_config.metrics_notifier   = config.metric_notifier;
 
     return std::make_unique<lower_phy_impl>(lower_phy_config);
   }

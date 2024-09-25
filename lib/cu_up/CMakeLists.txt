@@ -19,9 +19,10 @@
 #
 
 set(SOURCES
-      cu_up_executor_mapper.cpp
+      cu_up_executor_pool.cpp
       cu_up_factory.cpp
       cu_up_impl.cpp
+      cu_up_manager_impl.cpp
       ue_manager.cpp
       pdu_session_manager_impl.cpp
       routines/initial_cu_up_setup_routine.cpp
@@ -30,9 +31,11 @@ set(SOURCES
 add_library(srsran_cu_up STATIC ${SOURCES})
 
 target_link_libraries(srsran_cu_up
-        srsran_e1ap
+        srsran_e1ap_common
+        srsran_e1ap_cu_up
         srsran_gtpu
         srsran_pdcp
+        srsran_f1u_cu_up
         srsran_gateway
         e1ap_asn1
         srsran_sdap

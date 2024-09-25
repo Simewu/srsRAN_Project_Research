@@ -22,20 +22,21 @@
 
 #include "srsran/phy/upper/log_likelihood_ratio.h"
 #include "srsran/adt/optional.h"
+#include "srsran/srsvec/compare.h"
 #include <cmath>
 
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif // __AVX2__
-#ifdef HAVE_NEON
+#ifdef __ARM_NEON
 #include <arm_neon.h>
-#endif // HAVE_NEON
+#endif // __ARM_NEON
 
 using namespace srsran;
 
-// Computes the sum when at least one of the summands is plus/minus infinity.
-// Note that also the indeterminate case +LLR_INFTY + (-LLR_INFTY) is set to zero.
-static optional<log_likelihood_ratio> tackle_special_sums(log_likelihood_ratio val_a, log_likelihood_ratio val_b)
+/// Computes the sum when at least one of the summands is plus/minus infinity.
+/// Note that also the indeterminate case +LLR_INFTY + (-LLR_INFTY) is set to zero.
+static std::optional<log_likelihood_ratio> tackle_special_sums(log_likelihood_ratio val_a, log_likelihood_ratio val_b)
 {
   if (val_a == -val_b) {
     return log_likelihood_ratio(0);
@@ -49,7 +50,8 @@ static optional<log_likelihood_ratio> tackle_special_sums(log_likelihood_ratio v
   if (log_likelihood_ratio::isinf(val_b)) {
     return val_b;
   }
-  return {};
+
+  return std::nullopt;
 }
 
 log_likelihood_ratio log_likelihood_ratio::operator+=(log_likelihood_ratio rhs)
@@ -109,7 +111,7 @@ static void hard_decision_simd(bit_buffer& hard_bits, const int8_t* soft_bits, u
 
   for (unsigned max_bit = (len / AVX2_B_SIZE) * AVX2_B_SIZE; i_bit != max_bit; i_bit += AVX2_B_SIZE) {
     // Load AVX2_B_SIZE LLRs.
-    __m256i soft_epi8 = _mm256_loadu_si256((__m256i*)(&soft_bits[i_bit]));
+    __m256i soft_epi8 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(soft_bits + i_bit));
 
     // Shuffle soft_epi8: the soft bits are taken in groups of 8 and, inside each group, we reverse their order (this is
     // because, once we convert the soft bits into hard bits, the hard bits forming a byte need to be reversed before
@@ -157,7 +159,7 @@ static void hard_decision_simd(bit_buffer& hard_bits, const int8_t* soft_bits, u
     uint32_t bytes = _mm256_movemask_epi8(soft_epi8);
 
     // Write the packed bits into 4 bytes of the internal buffer.
-    *(reinterpret_cast<uint32_t*>(packed_buffer.begin())) = bytes;
+    std::memcpy(packed_buffer.begin(), &bytes, sizeof(uint32_t));
 
     // Advance buffer.
     packed_buffer = packed_buffer.last(packed_buffer.size() - (AVX2_B_SIZE / 8));
@@ -171,7 +173,7 @@ static void hard_decision_simd(bit_buffer& hard_bits, const int8_t* soft_bits, u
 }
 #endif // __AVX2__
 
-#ifdef HAVE_NEON
+#ifdef __ARM_NEON
 static void hard_decision_simd(bit_buffer& hard_bits, const int8_t* soft_bits, unsigned len)
 {
   const uint8x16_t mask_msb_u8    = vdupq_n_u8(0x80);
@@ -220,9 +222,95 @@ static void hard_decision_simd(bit_buffer& hard_bits, const int8_t* soft_bits, u
     hard_bits.insert(hard_bit, i_bit, 1);
   }
 }
-#endif // HAVE_NEON
+#endif // __ARM_NEON
 
-void srsran::hard_decision(bit_buffer& hard_bits, span<const log_likelihood_ratio> soft_bits)
+void srsran::clamp(span<log_likelihood_ratio>       out,
+                   span<const log_likelihood_ratio> in,
+                   log_likelihood_ratio             low,
+                   log_likelihood_ratio             high)
+{
+  srsran_assert(out.size() == in.size(),
+                "Input size (i.e., {}) is not equal to the output size (i.e., {}).",
+                in.size(),
+                out.size());
+  unsigned len = in.size();
+  unsigned i   = 0;
+
+#if defined(__AVX512F__) && defined(__AVX512BW__)
+  const __m512i* in_ptr  = reinterpret_cast<const __m512i*>(in.data());
+  __m512i*       out_ptr = reinterpret_cast<__m512i*>(out.data());
+
+  __m512i low_epi8  = _mm512_set1_epi8(low.to_int());
+  __m512i high_epi8 = _mm512_set1_epi8(high.to_int());
+
+  // Clamping function.
+  const auto clamp_func = [&low_epi8, &high_epi8](__m512i in_epi8) {
+    __m512i temp = in_epi8;
+
+    __mmask64 high_mask = _mm512_cmp_epi8_mask(temp, high_epi8, _MM_CMPINT_GT);
+    temp                = _mm512_mask_blend_epi8(high_mask, temp, high_epi8);
+
+    __mmask64 low_mask = _mm512_cmp_epi8_mask(low_epi8, temp, _MM_CMPINT_GT);
+    temp               = _mm512_mask_blend_epi8(low_mask, temp, low_epi8);
+
+    return temp;
+  };
+
+  // Clamps 64 LLR at a time.
+  for (unsigned len_simd = (len / 64) * 64; i != len_simd; i += 64) {
+    _mm512_storeu_si512(out_ptr++, clamp_func(_mm512_loadu_si512(in_ptr++)));
+  }
+
+  // Clamps the rest.
+  __mmask64 remainder_mask = (1UL << (len % 64UL)) - 1UL;
+  _mm512_mask_storeu_epi8(out_ptr, remainder_mask, clamp_func(_mm512_maskz_loadu_epi8(remainder_mask, in_ptr)));
+#else // defined(__AVX512F__) && defined(__AVX512BW__)
+#ifdef __AVX2__
+  const __m256i* in_ptr  = reinterpret_cast<const __m256i*>(in.data());
+  __m256i*       out_ptr = reinterpret_cast<__m256i*>(out.data());
+
+  __m256i low_epi8  = _mm256_set1_epi8(low.to_int());
+  __m256i high_epi8 = _mm256_set1_epi8(high.to_int());
+
+  for (unsigned len_simd = (len / 32) * 32; i != len_simd; i += 32) {
+    __m256i temp = _mm256_loadu_si256(in_ptr++);
+
+    __m256i high_mask = _mm256_cmpgt_epi8(temp, high_epi8);
+    temp              = _mm256_blendv_epi8(temp, high_epi8, high_mask);
+
+    __m256i low_mask = _mm256_cmpgt_epi8(low_epi8, temp);
+    temp             = _mm256_blendv_epi8(temp, low_epi8, low_mask);
+
+    _mm256_storeu_si256(out_ptr++, temp);
+  }
+#endif // __AVX2__
+#ifdef __ARM_NEON
+  int8x16_t low_s8  = vdupq_n_s8(static_cast<int8_t>(low.to_int()));
+  int8x16_t high_s8 = vdupq_n_s8(static_cast<int8_t>(high.to_int()));
+
+  const int8_t* in_ptr  = reinterpret_cast<const int8_t*>(in.data());
+  int8_t*       out_ptr = reinterpret_cast<int8_t*>(out.data());
+
+  for (unsigned len_simd = (len / 16) * 16; i != len_simd; i += 16) {
+    int8x16_t temp = vld1q_s8(in_ptr + i);
+
+    uint8x16_t high_mask = vcgtq_s8(temp, high_s8);
+    temp                 = vbslq_s8(high_mask, high_s8, temp);
+
+    uint8x16_t low_mask = vcltq_s8(temp, low_s8);
+    temp                = vbslq_s8(low_mask, low_s8, temp);
+
+    vst1q_s8(out_ptr + i, temp);
+  }
+#endif // __ARM_NEON
+
+  for (; i != len; ++i) {
+    out[i] = std::clamp(in[i], low, high);
+  }
+#endif // defined(__AVX512F__) && defined(__AVX512BW__)
+}
+
+bool srsran::hard_decision(bit_buffer& hard_bits, span<const log_likelihood_ratio> soft_bits)
 {
   // Make sure that there is enough space in the output to accommodate the hard bits.
   srsran_assert(soft_bits.size() <= hard_bits.size(),
@@ -232,7 +320,7 @@ void srsran::hard_decision(bit_buffer& hard_bits, span<const log_likelihood_rati
 
   unsigned nof_bits = soft_bits.size();
 
-#if defined(__AVX2__) || defined(HAVE_NEON)
+#if defined(__AVX2__) || defined(__ARM_NEON)
 
   hard_decision_simd(hard_bits, reinterpret_cast<const int8_t*>(soft_bits.data()), nof_bits);
 
@@ -244,5 +332,8 @@ void srsran::hard_decision(bit_buffer& hard_bits, span<const log_likelihood_rati
     // Insert into the bit buffer.
     hard_bits.insert(hard_bit, i_bit, 1);
   }
-#endif // __AVX2__ or HAVE_NEON
+#endif // __AVX2__ or __ARM_NEON
+
+  // Return false if it finds a zero in the soft bits.
+  return srsvec::find(soft_bits, log_likelihood_ratio(0)) == soft_bits.end();
 }

@@ -22,11 +22,13 @@
 
 #pragma once
 
+#include "srsran/adt/optional.h"
 #include "fmt/format.h"
+#include <optional>
 
 namespace srsran {
 
-/// \brief Converts fmt memoryy buffer to c_str() without the need for conversion to intermediate std::string.
+/// Converts fmt memory buffer to c_str() without the need for conversion to intermediate std::string.
 template <size_t N>
 const char* to_c_str(fmt::basic_memory_buffer<char, N>& mem_buffer)
 {
@@ -49,17 +51,17 @@ public:
   /// Default constructor.
   delimited_formatter()
   {
-    static const fmt::string_view DEFAULT_FORMAT    = "{}";
-    static const fmt::string_view DEFAULT_DELIMITER = " ";
+    static constexpr std::string_view DEFAULT_FORMAT    = "{}";
+    static constexpr std::string_view DEFAULT_DELIMITER = " ";
     format_buffer.append(DEFAULT_FORMAT.begin(), DEFAULT_FORMAT.end());
     delimiter_buffer.append(DEFAULT_DELIMITER.begin(), DEFAULT_DELIMITER.end());
   }
 
   /// Constructor that sets the default delimiter according to the string \c default_delimiter.
-  explicit delimited_formatter(const std::string& default_delimiter)
+  explicit delimited_formatter(std::string_view default_delimiter)
   {
-    static const fmt::string_view DEFAULT_FORMAT    = "{}";
-    static const fmt::string_view DEFAULT_DELIMITER = default_delimiter;
+    static constexpr std::string_view DEFAULT_FORMAT    = "{}";
+    std::string_view                  DEFAULT_DELIMITER = default_delimiter;
     format_buffer.append(DEFAULT_FORMAT.begin(), DEFAULT_FORMAT.end());
     delimiter_buffer.append(DEFAULT_DELIMITER.begin(), DEFAULT_DELIMITER.end());
   }
@@ -79,8 +81,8 @@ public:
     // Set the first field indicator.
     first = true;
 
-    static const fmt::string_view PREAMBLE_FORMAT   = "{:";
-    static const fmt::string_view NEWLINE_DELIMITER = "\n  ";
+    static constexpr std::string_view PREAMBLE_FORMAT   = "{:";
+    static constexpr std::string_view NEWLINE_DELIMITER = "\n  ";
 
     // Skip if context is empty and use default format.
     if (context.begin() == context.end()) {
@@ -191,7 +193,7 @@ public:
   }
   /// \brief Returns \c true if the verbose representation is selected, \c false otherwise.
   /// \remark it must be called after \ref parse.
-  bool is_verbose() { return verbose; }
+  bool is_verbose() const { return verbose; }
 
 private:
   /// Internal method used to format with any formatting options.
@@ -205,11 +207,11 @@ private:
 
       if (temp_buffer.size() > 0) {
         // Prepend delimiter to the formatted output.
-        fmt::format_to(context.out(), "{}", fmt::string_view(delimiter_buffer.data(), delimiter_buffer.size()));
+        fmt::format_to(context.out(), "{}", std::string_view(delimiter_buffer.data(), delimiter_buffer.size()));
       }
 
       // Append the formatted string to the context iterator.
-      fmt::format_to(context.out(), "{}", fmt::string_view(temp_buffer.data(), temp_buffer.size()));
+      fmt::format_to(context.out(), "{}", std::string_view(temp_buffer.data(), temp_buffer.size()));
 
       return;
     }
@@ -226,21 +228,21 @@ private:
       // Buffer to hold the formatted string.
       fmt::memory_buffer temp_buffer;
       fmt::format_to(
-          temp_buffer, fmt::string_view(format_buffer.data(), format_buffer.size()), std::forward<Args>(args)...);
+          temp_buffer, std::string_view(format_buffer.data(), format_buffer.size()), std::forward<Args>(args)...);
 
       if (temp_buffer.size() > 0) {
         // Prepend delimiter to the formatted output.
-        fmt::format_to(context.out(), "{}", fmt::string_view(delimiter_buffer.data(), delimiter_buffer.size()));
+        fmt::format_to(context.out(), "{}", std::string_view(delimiter_buffer.data(), delimiter_buffer.size()));
       }
 
       // Append the formatted string to the context iterator.
-      fmt::format_to(context.out(), "{}", fmt::string_view(temp_buffer.data(), temp_buffer.size()));
+      fmt::format_to(context.out(), "{}", std::string_view(temp_buffer.data(), temp_buffer.size()));
 
       return;
     }
     // Format without prepending delimiter.
     fmt::format_to(
-        context.out(), fmt::string_view(format_buffer.data(), format_buffer.size()), std::forward<Args>(args)...);
+        context.out(), std::string_view(format_buffer.data(), format_buffer.size()), std::forward<Args>(args)...);
     first = false;
   }
 
@@ -255,6 +257,62 @@ private:
   fmt::memory_buffer format_buffer;
 };
 
+namespace detail {
+
+template <typename FormatFunc>
+class custom_formattable
+{
+public:
+  custom_formattable(FormatFunc func_) : format(std::move(func_)) {}
+
+  /// Functor that takes a "FormatContext& ctx" as argument.
+  FormatFunc format;
+};
+
+} // namespace detail
+
+/// \brief Creates a formattable object, whose format function is the passed functor/lambda \c func.
+///
+/// This function is useful to defer the formatting logic to the point where the format is actually needed (e.g.
+/// logging backend).
+/// \tparam FormatFunc Type of the format function.
+/// \param func Format function to be called when formatting is needed.
+/// \return Formattable object.
+template <typename FormatFunc>
+detail::custom_formattable<FormatFunc> make_formattable(FormatFunc func)
+{
+  return detail::custom_formattable<FormatFunc>(std::move(func));
+}
+
+namespace detail {
+
+/// Formattable object that prepends a prefix (e.g. "snr=")  to a given value. If the value is not set, the prefix is
+/// not logged.
+template <typename T>
+struct optional_prefix_formatter {
+  optional_prefix_formatter(const char* label_, const std::optional<T>& value_) : prefix(label_), value(value_) {}
+  optional_prefix_formatter(const char* label_, std::optional<T>&& value_) : prefix(label_), value(std::move(value_)) {}
+  const char*      prefix;
+  std::optional<T> value;
+};
+
+} // namespace detail
+
+/// \brief Creates a formattable object that prefixes an optional value (e.g. " snr=<value>"), if the optional set.
+///
+/// This is useful to defer the formatting logic to the point where the format is actually needed (e.g. logging
+/// backend).
+template <typename T>
+detail::optional_prefix_formatter<T> add_prefix_if_set(const char* prefix, const std::optional<T>& value)
+{
+  return detail::optional_prefix_formatter<T>(prefix, value);
+}
+template <typename T>
+detail::optional_prefix_formatter<T> add_prefix_if_set(const char* prefix, std::optional<T>&& value)
+{
+  return detail::optional_prefix_formatter<T>(prefix, std::move(value));
+}
+
 } // namespace srsran
 
 namespace fmt {
@@ -264,6 +322,28 @@ struct basic_fmt_parser {
   auto parse(ParseContext& ctx) -> decltype(ctx.begin())
   {
     return ctx.begin();
+  }
+};
+
+template <typename FormatFunc>
+struct formatter<srsran::detail::custom_formattable<FormatFunc>> : public basic_fmt_parser {
+public:
+  template <typename FormatContext>
+  auto format(const srsran::detail::custom_formattable<FormatFunc>& f, FormatContext& ctx)
+  {
+    return f.format(ctx);
+  }
+};
+
+template <typename T>
+struct formatter<srsran::detail::optional_prefix_formatter<T>> : public formatter<std::optional<T>> {
+  template <typename FormatContext>
+  auto format(const srsran::detail::optional_prefix_formatter<T>& f, FormatContext& ctx)
+  {
+    if (f.value.has_value()) {
+      return fmt::format_to(ctx.out(), "{}{}", f.prefix, f.value);
+    }
+    return ctx.out();
   }
 };
 

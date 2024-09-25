@@ -41,7 +41,7 @@ static void fill_codeword(uplink_processor::pusch_pdu& pdu, const fapi::ul_pusch
   pdu.harq_id = fapi_pdu.pusch_data.harq_process_id;
   pdu.tb_size = fapi_pdu.pusch_data.tb_size;
 
-  pdu.pdu.codeword = optional<pusch_processor::codeword_description>(std::move(cw));
+  pdu.pdu.codeword = std::optional<pusch_processor::codeword_description>(std::move(cw));
 }
 
 /// Fills the \c rb_allocation parameter of the PUSCH PDU.
@@ -133,14 +133,19 @@ void srsran::fapi_adaptor::convert_pusch_fapi_to_phy(uplink_processor::pusch_pdu
     proc_pdu.dmrs_symbol_mask.set(i, ((static_cast<unsigned>(fapi_pdu.ul_dmrs_symb_pos >> i) & 1U) == 1U));
   }
 
-  proc_pdu.dmrs =
-      fapi_pdu.dmrs_type == fapi::dmrs_cfg_type::type_1 ? dmrs_type::options::TYPE1 : dmrs_type::options::TYPE2;
-  proc_pdu.scrambling_id               = fapi_pdu.pusch_dmrs_scrambling_id;
-  proc_pdu.n_scid                      = fapi_pdu.nscid;
-  proc_pdu.nof_cdm_groups_without_data = fapi_pdu.num_dmrs_cdm_grps_no_data;
-  proc_pdu.start_symbol_index          = fapi_pdu.start_symbol_index;
-  proc_pdu.nof_symbols                 = fapi_pdu.nr_of_symbols;
-  proc_pdu.tbs_lbrm_bytes              = fapi_pdu.pusch_maintenance_v3.tb_size_lbrm_bytes.value();
+  if (fapi_pdu.transform_precoding) {
+    proc_pdu.dmrs = pusch_processor::dmrs_transform_precoding_configuration{.n_rs_id = fapi_pdu.pusch_dmrs_identity};
+  } else {
+    proc_pdu.dmrs = pusch_processor::dmrs_configuration{
+        .dmrs =
+            fapi_pdu.dmrs_type == fapi::dmrs_cfg_type::type_1 ? dmrs_type::options::TYPE1 : dmrs_type::options::TYPE2,
+        .scrambling_id               = fapi_pdu.pusch_dmrs_scrambling_id,
+        .n_scid                      = (fapi_pdu.nscid == 1),
+        .nof_cdm_groups_without_data = fapi_pdu.num_dmrs_cdm_grps_no_data};
+  }
+  proc_pdu.start_symbol_index = fapi_pdu.start_symbol_index;
+  proc_pdu.nof_symbols        = fapi_pdu.nr_of_symbols;
+  proc_pdu.tbs_lbrm           = fapi_pdu.pusch_maintenance_v3.tb_size_lbrm_bytes;
 
   if (fapi_pdu.tx_direct_current_location < 3300) {
     proc_pdu.dc_position = static_cast<unsigned>(fapi_pdu.tx_direct_current_location);

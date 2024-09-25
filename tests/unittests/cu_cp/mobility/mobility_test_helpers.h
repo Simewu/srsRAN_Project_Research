@@ -22,20 +22,15 @@
 
 #pragma once
 
-#include "../cu_cp_test_helpers.h"
-#include "lib/cu_cp/du_processor/du_processor_config.h"
 #include "tests/unittests/cu_cp/test_helpers.h"
-#include "tests/unittests/f1ap/common/test_helpers.h"
-#include "tests/unittests/f1ap/cu_cp/f1ap_cu_test_helpers.h"
-#include "tests/unittests/rrc/test_helpers.h"
-#include "srsran/cu_cp/cu_cp_types.h"
+#include "srsran/support/executors/manual_task_worker.h"
 #include <gtest/gtest.h>
 
 namespace srsran {
 namespace srs_cu_cp {
 
 /// Fixture class for CU-CP mobility tests
-class mobility_test : public cu_cp_test
+class mobility_test : public ::testing::Test
 {
 protected:
   mobility_test();
@@ -46,11 +41,12 @@ protected:
   srslog::basic_logger& test_logger  = srslog::fetch_basic_logger("TEST");
   srslog::basic_logger& cu_cp_logger = srslog::fetch_basic_logger("CU-CP");
 
-  manual_task_worker      ctrl_worker{128};
-  timer_manager           timers;
-  ue_configuration        ue_config;
-  up_resource_manager_cfg up_config;
-  ue_manager              ue_mng{ue_config, up_config, timers, ctrl_worker};
+  manual_task_worker  ctrl_worker{128};
+  timer_manager       timers;
+  cu_cp_configuration cu_cp_cfg;
+
+  ue_manager                                  ue_mng{cu_cp_cfg};
+  dummy_cu_cp_ue_context_manipulation_handler cu_cp_handler;
 };
 
 } // namespace srs_cu_cp

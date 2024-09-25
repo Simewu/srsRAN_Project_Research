@@ -22,6 +22,7 @@
 
 #include "processor_notifier_adaptor.h"
 #include "srsran/phy/support/resource_grid_context.h"
+#include "srsran/phy/support/shared_resource_grid.h"
 #include "srsran/support/srsran_assert.h"
 
 using namespace srsran;
@@ -30,6 +31,12 @@ void processor_notifier_adaptor::downlink_adaptor::on_tti_boundary(const lower_p
 {
   srsran_assert(timing_notifier, "The adaptor is not connected to a timing notifier.");
   timing_notifier->on_tti_boundary(context);
+}
+
+void processor_notifier_adaptor::downlink_adaptor::on_new_metrics(const lower_phy_baseband_metrics& metrics)
+{
+  srsran_assert(metric_notifier, "The adaptor is not connected to a metrics notifier.");
+  metric_notifier->on_new_transmit_metrics(metrics);
 }
 
 void processor_notifier_adaptor::uplink_adaptor::on_half_slot(const lower_phy_timing_context& context)
@@ -42,6 +49,12 @@ void processor_notifier_adaptor::uplink_adaptor::on_full_slot(const lower_phy_ti
 {
   srsran_assert(timing_notifier, "The adaptor is not connected to a timing notifier.");
   timing_notifier->on_ul_full_slot_boundary(context);
+}
+
+void processor_notifier_adaptor::uplink_adaptor::on_new_metrics(const lower_phy_baseband_metrics& metrics)
+{
+  srsran_assert(metric_notifier, "The adaptor is not connected to a metrics notifier.");
+  metric_notifier->on_new_receive_metrics(metrics);
 }
 
 void processor_notifier_adaptor::pdxch_adaptor::on_pdxch_request_late(const resource_grid_context& context)
@@ -75,7 +88,7 @@ void processor_notifier_adaptor::puxch_adaptor::on_puxch_request_late(const reso
   error_notifier->on_puxch_request_late(context);
 }
 
-void processor_notifier_adaptor::puxch_adaptor::on_rx_symbol(const resource_grid_reader&        grid,
+void processor_notifier_adaptor::puxch_adaptor::on_rx_symbol(const shared_resource_grid&        grid,
                                                              const lower_phy_rx_symbol_context& context)
 {
   srsran_assert(error_notifier, "The adaptor is not connected to an error notifier.");

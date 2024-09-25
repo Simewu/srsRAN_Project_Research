@@ -22,14 +22,14 @@
 
 #pragma once
 
+#include "srsran/support/compiler.h"
 #include "srsran/support/srsran_assert.h"
 #include <memory>
 
 namespace srsran {
-
 namespace detail {
 
-/// Class that holds promise result value
+/// Class that holds promise result value.
 template <typename R, typename Base>
 struct promise_data : public Base {
   promise_data()                                     = default;
@@ -40,11 +40,11 @@ struct promise_data : public Base {
   ~promise_data()
   {
     if (Base::has_value) {
-      reinterpret_cast<R*>(&mem)->~R();
+      std::launder(reinterpret_cast<R*>(&mem))->~R();
     }
   }
 
-  /// Set Return value
+  /// Set Return value.
   template <typename U>
   void return_value(U&& u)
   {
@@ -53,24 +53,24 @@ struct promise_data : public Base {
     Base::has_value = true;
   }
 
-  /// Get Return value
+  /// Get Return value.
   const R& get() const&
   {
     srsran_assert(Base::has_value, "Trying to extract result from unset Promise");
-    return *reinterpret_cast<const R*>(&mem);
+    return *std::launder(reinterpret_cast<const R*>(&mem));
   }
   R get() &&
   {
     srsran_assert(Base::has_value, "Trying to extract result from unset Promise");
-    return std::move(*reinterpret_cast<R*>(&mem));
+    return std::move(*std::launder(reinterpret_cast<R*>(&mem)));
   }
 
 private:
-  /// result storage.
+  /// Result storage.
   std::aligned_storage_t<sizeof(R), alignof(R)> mem;
 };
 
-/// Specialization for when Return type is void
+/// Specialization for when Return type is void.
 template <typename Base>
 struct promise_data<void, Base> : public Base {
   void return_value() { Base::has_value = true; }

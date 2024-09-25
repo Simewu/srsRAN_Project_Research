@@ -22,42 +22,15 @@
 
 #pragma once
 
-#include "srsran/adt/optional.h"
+#include "srsran/pdcp/pdcp_sn_size.h"
+#include "srsran/rlc/rlc_mode.h"
 #include "srsran/support/srsran_assert.h"
 #include "srsran/support/timers.h"
-#include "fmt/format.h"
 #include <cstdint>
-#include <memory>
+#include <optional>
 #include <string>
 
 namespace srsran {
-
-/// RLC NR modes
-enum class rlc_mode { tm, um_bidir, um_unidir_ul, um_unidir_dl, am };
-inline bool from_string(rlc_mode& mode, const std::string& str)
-{
-  if (str == "am") {
-    mode = rlc_mode::am;
-    return true;
-  }
-  if (str == "um-bidir") {
-    mode = rlc_mode::um_bidir;
-    return true;
-  }
-  if (str == "um-unidir-ul") {
-    mode = rlc_mode::um_unidir_ul;
-    return true;
-  }
-  if (str == "um-unidir-dl") {
-    mode = rlc_mode::um_unidir_dl;
-    return true;
-  }
-  if (str == "tm") {
-    mode = rlc_mode::tm;
-    return true;
-  }
-  return false;
-}
 
 /// RLC UM NR sequence number field
 enum class rlc_um_sn_size : uint16_t { size6bits = 6, size12bits = 12 };
@@ -679,7 +652,7 @@ struct rlc_rx_am_config {
 
   // Implementation-specific parameters that are not specified by 3GPP
   /// Maximum number of visited SNs in the RX window when building a status report.
-  optional<uint32_t> max_sn_per_status;
+  std::optional<uint32_t> max_sn_per_status;
 };
 
 /// \brief Configurable Tx parameters for RLC AM
@@ -687,6 +660,9 @@ struct rlc_rx_am_config {
 /// Ref: 3GPP TS 38.322 Section 7
 struct rlc_tx_am_config {
   rlc_am_sn_size sn_field_length; ///< Number of bits used for sequence number
+
+  /// Length of the PDCP sequence number. This value is needed to extract the PDCP SN from SDUs to support SDU discard.
+  pdcp_sn_size pdcp_sn_len = pdcp_sn_size::invalid;
 
   // Timers Ref: 3GPP TS 38.322 Section 7.3
   int32_t t_poll_retx; ///< Poll retx timeout (ms)
@@ -697,7 +673,8 @@ struct rlc_tx_am_config {
   int32_t  poll_byte;       ///< Insert poll bit after this much data (bytes)
 
   // Implementation-specific parameters that are not specified by 3GPP
-  uint32_t queue_size; ///< SDU queue size
+  uint32_t queue_size;       ///< SDU queue size in PDUs
+  uint32_t queue_size_bytes; ///< SDU queue size in bytes
   uint32_t max_window; ///< Custom parameter to limit the maximum window size for memory reasons. 0 means no limit.
 };
 
@@ -723,8 +700,12 @@ struct rlc_rx_um_config {
 struct rlc_tx_um_config {
   rlc_um_sn_size sn_field_length; ///< Number of bits used for sequence number
 
+  /// Length of the PDCP sequence number. This value is needed to extract the PDCP SN from SDUs to support SDU discard.
+  pdcp_sn_size pdcp_sn_len = pdcp_sn_size::invalid;
+
   // Implementation-specific parameters that are not specified by 3GPP
-  uint32_t queue_size; ///< SDU queue size
+  uint32_t queue_size;       ///< SDU queue size
+  uint32_t queue_size_bytes; ///< SDU queue size in bytes
 };
 
 /// \brief Configurable parameters for RLC UM
@@ -748,7 +729,8 @@ struct rlc_rx_tm_config {
 /// This includes only implementation-specific parameters that are not specified by 3GPP
 struct rlc_tx_tm_config {
   // Implementation-specific parameters that are not specified by 3GPP
-  uint32_t queue_size; ///< SDU queue size
+  uint32_t queue_size;       ///< SDU queue size
+  uint32_t queue_size_bytes; ///< SDU queue size limit in bytes
 };
 
 /// \brief Configurable parameters for RLC TM
@@ -773,25 +755,9 @@ struct rlc_config {
 namespace fmt {
 
 template <>
-struct formatter<srsran::rlc_mode> {
-  template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto format(srsran::rlc_mode mode, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
-  {
-    constexpr static const char* options[] = {"TM", "UM Bi-dir", "UM Uni-dir-UL", "UM Uni-dir-DL", "AM"};
-    return format_to(ctx.out(), "{}", options[static_cast<unsigned>(mode)]);
-  }
-};
-
-template <>
 struct formatter<srsran::rlc_um_sn_size> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
@@ -869,13 +835,13 @@ struct formatter<srsran::rlc_control_pdu_type> {
 template <>
 struct formatter<srsran::rlc_tx_tm_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_tx_tm_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_tx_tm_config& cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
   {
     return format_to(ctx.out(), "queue_size={}", cfg.queue_size);
   }
@@ -885,13 +851,13 @@ struct formatter<srsran::rlc_tx_tm_config> {
 template <>
 struct formatter<srsran::rlc_rx_tm_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_rx_tm_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_rx_tm_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(), "");
   }
@@ -907,7 +873,7 @@ struct formatter<srsran::rlc_tm_config> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_tm_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_tm_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(), "{} {}", cfg.tx, cfg.rx);
   }
@@ -923,9 +889,14 @@ struct formatter<srsran::rlc_tx_um_config> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_tx_um_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_tx_um_config& cfg, FormatContext& ctx)
   {
-    return format_to(ctx.out(), "tx_sn_size={} queue_size={}", cfg.sn_field_length, cfg.queue_size);
+    return format_to(ctx.out(),
+                     "tx_sn_size={} pdcp_sn_len={} queue_size={} queue_size_bytes={}",
+                     cfg.sn_field_length,
+                     cfg.pdcp_sn_len,
+                     cfg.queue_size,
+                     cfg.queue_size_bytes);
   }
 };
 
@@ -939,7 +910,7 @@ struct formatter<srsran::rlc_rx_um_config> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_rx_um_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_rx_um_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(), "rx_sn_size={} t_reassembly={}", cfg.sn_field_length, cfg.t_reassembly);
   }
@@ -949,13 +920,13 @@ struct formatter<srsran::rlc_rx_um_config> {
 template <>
 struct formatter<srsran::rlc_um_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_um_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_um_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(), "{} {}", cfg.tx, cfg.rx);
   }
@@ -965,22 +936,25 @@ struct formatter<srsran::rlc_um_config> {
 template <>
 struct formatter<srsran::rlc_tx_am_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_tx_am_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_tx_am_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(),
-                     "tx_sn_size={} t_poll_retx={} max_retx={} poll_pdu={} poll_byte={} queue_size={} max_window={}",
+                     "tx_sn_size={} pdcp_sn_len={} t_poll_retx={} max_retx={} poll_pdu={} poll_byte={} queue_size={} "
+                     "queue_size_bytes={} max_window={}",
                      cfg.sn_field_length,
+                     cfg.pdcp_sn_len,
                      cfg.t_poll_retx,
                      cfg.max_retx_thresh,
                      cfg.poll_pdu,
                      cfg.poll_byte,
                      cfg.queue_size,
+                     cfg.queue_size_bytes,
                      cfg.max_window);
   }
 };
@@ -989,13 +963,13 @@ struct formatter<srsran::rlc_tx_am_config> {
 template <>
 struct formatter<srsran::rlc_rx_am_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_rx_am_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_rx_am_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(),
                      "rx_sn_size={} t_reassembly={} t_status_prohibit={} max_sn_per_status={}",
@@ -1016,7 +990,7 @@ struct formatter<srsran::rlc_am_config> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_am_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_am_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(), "{} {}", cfg.tx, cfg.rx);
   }
@@ -1026,13 +1000,13 @@ struct formatter<srsran::rlc_am_config> {
 template <>
 struct formatter<srsran::rlc_config> {
   template <typename ParseContext>
-  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  auto parse(ParseContext& ctx)
   {
     return ctx.begin();
   }
 
   template <typename FormatContext>
-  auto format(srsran::rlc_config cfg, FormatContext& ctx) -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_config& cfg, FormatContext& ctx)
   {
     if (cfg.mode == srsran::rlc_mode::tm) {
       return format_to(ctx.out(), "{} {}", cfg.mode, cfg.tm);

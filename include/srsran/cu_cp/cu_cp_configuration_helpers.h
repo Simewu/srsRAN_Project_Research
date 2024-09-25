@@ -23,18 +23,9 @@
 #pragma once
 
 #include "cu_cp_configuration.h"
-#include "srsran/ngap/ngap_configuration_helpers.h"
 
 namespace srsran {
 namespace config_helpers {
-
-/// Generates default cell configuration used by gNB DU. The default configuration should be valid.
-inline srs_cu_cp::cu_cp_configuration make_default_cu_cp_config()
-{
-  srs_cu_cp::cu_cp_configuration cfg{};
-  cfg.ngap_config = make_default_ngap_config();
-  return cfg;
-}
 
 /// Generates default QoS configuration used by gNB CU-CP. The default configuration should be valid.
 /// Dependencies between timers should be considered:
@@ -45,6 +36,75 @@ inline srs_cu_cp::cu_cp_configuration make_default_cu_cp_config()
 inline std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> make_default_cu_cp_qos_config_list()
 {
   std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> qos_list = {};
+  {
+    // 5QI=1
+    srs_cu_cp::cu_cp_qos_config cfg{};
+    pdcp_config                 pdcp_cfg{};
+
+    pdcp_cfg.rb_type                       = pdcp_rb_type::drb;
+    pdcp_cfg.rlc_mode                      = pdcp_rlc_mode::um;
+    pdcp_cfg.ciphering_required            = true;
+    pdcp_cfg.integrity_protection_required = false;
+
+    // > Tx
+    pdcp_cfg.tx.sn_size                = pdcp_sn_size::size12bits;
+    pdcp_cfg.tx.discard_timer          = pdcp_discard_timer::infinity;
+    pdcp_cfg.tx.status_report_required = false;
+
+    // > Rx
+    pdcp_cfg.rx.sn_size               = pdcp_sn_size::size12bits;
+    pdcp_cfg.rx.out_of_order_delivery = false;
+    pdcp_cfg.rx.t_reordering          = pdcp_t_reordering::ms80;
+
+    cfg.pdcp                     = pdcp_cfg;
+    qos_list[uint_to_five_qi(1)] = cfg;
+  }
+  {
+    // 5QI=2
+    srs_cu_cp::cu_cp_qos_config cfg{};
+    pdcp_config                 pdcp_cfg{};
+
+    pdcp_cfg.rb_type                       = pdcp_rb_type::drb;
+    pdcp_cfg.rlc_mode                      = pdcp_rlc_mode::um;
+    pdcp_cfg.ciphering_required            = true;
+    pdcp_cfg.integrity_protection_required = false;
+
+    // > Tx
+    pdcp_cfg.tx.sn_size                = pdcp_sn_size::size12bits;
+    pdcp_cfg.tx.discard_timer          = pdcp_discard_timer::infinity;
+    pdcp_cfg.tx.status_report_required = false;
+
+    // > Rx
+    pdcp_cfg.rx.sn_size               = pdcp_sn_size::size12bits;
+    pdcp_cfg.rx.out_of_order_delivery = false;
+    pdcp_cfg.rx.t_reordering          = pdcp_t_reordering::ms80;
+
+    cfg.pdcp                     = pdcp_cfg;
+    qos_list[uint_to_five_qi(2)] = cfg;
+  }
+  {
+    // 5QI=5
+    srs_cu_cp::cu_cp_qos_config cfg{};
+    pdcp_config                 pdcp_cfg{};
+
+    pdcp_cfg.rb_type                       = pdcp_rb_type::drb;
+    pdcp_cfg.rlc_mode                      = pdcp_rlc_mode::am;
+    pdcp_cfg.ciphering_required            = true;
+    pdcp_cfg.integrity_protection_required = false;
+
+    // > Tx
+    pdcp_cfg.tx.sn_size                = pdcp_sn_size::size12bits;
+    pdcp_cfg.tx.discard_timer          = pdcp_discard_timer::infinity;
+    pdcp_cfg.tx.status_report_required = false;
+
+    // > Rx
+    pdcp_cfg.rx.sn_size               = pdcp_sn_size::size12bits;
+    pdcp_cfg.rx.out_of_order_delivery = false;
+    pdcp_cfg.rx.t_reordering          = pdcp_t_reordering::ms80;
+
+    cfg.pdcp                     = pdcp_cfg;
+    qos_list[uint_to_five_qi(5)] = cfg;
+  }
   {
     // 5QI=7
     srs_cu_cp::cu_cp_qos_config cfg{};
@@ -94,10 +154,23 @@ inline std::map<five_qi_t, srs_cu_cp::cu_cp_qos_config> make_default_cu_cp_qos_c
   return qos_list;
 }
 
-inline srs_cu_cp::mobility_configuration make_default_mobility_config()
+/// Generates default cell configuration used by gNB DU. The default configuration should be valid.
+inline srs_cu_cp::cu_cp_configuration make_default_cu_cp_config()
 {
-  srs_cu_cp::mobility_configuration cfg{};
-
+  srs_cu_cp::cu_cp_configuration cfg{};
+  // Supported TAs (this default entry will be removed if supported TAs are provided in the config)
+  cfg.node.supported_tas.push_back(srsran::srs_cu_cp::supported_tracking_area{7, plmn_identity::test_value(), {{1}}});
+  // DRBs
+  cfg.bearers.drb_config = config_helpers::make_default_cu_cp_qos_config_list();
+  // Security.
+  cfg.security.int_algo_pref_list = {security::integrity_algorithm::nia2,
+                                     security::integrity_algorithm::nia1,
+                                     security::integrity_algorithm::nia3,
+                                     security::integrity_algorithm::nia0};
+  cfg.security.enc_algo_pref_list = {security::ciphering_algorithm::nea0,
+                                     security::ciphering_algorithm::nea2,
+                                     security::ciphering_algorithm::nea1,
+                                     security::ciphering_algorithm::nea3};
   return cfg;
 }
 
@@ -115,17 +188,28 @@ inline bool is_valid_configuration(const srs_cu_cp::mobility_configuration& conf
 inline bool is_valid_configuration(const srs_cu_cp::cu_cp_configuration& config)
 {
   // Notifiers aren't checked here.
-  if (!is_valid_configuration(config.ngap_config)) {
-    fmt::print("Invalid NGAP configuration.\n");
+  if (config.node.ran_node_name.empty()) {
+    fmt::print("RAN node name is empty\n");
     return false;
   }
 
-  if (!is_valid_configuration(config.mobility_config)) {
+  if (!is_valid_configuration(config.mobility)) {
     fmt::print("Invalid mobility configuration.\n");
     return false;
   }
 
   return true;
+}
+
+inline std::vector<plmn_identity>
+get_supported_plmns(const std::vector<srs_cu_cp::supported_tracking_area>& supported_tas)
+{
+  std::vector<plmn_identity> plmns;
+  plmns.reserve(supported_tas.size());
+  for (const auto& ta : supported_tas) {
+    plmns.push_back(ta.plmn);
+  }
+  return plmns;
 }
 
 } // namespace config_helpers

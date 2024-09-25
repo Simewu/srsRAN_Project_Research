@@ -22,7 +22,7 @@
 
 #include "rrc_reconfiguration_procedure.h"
 #include "../rrc_asn1_helpers.h"
-#include "srsran/ran/cause.h"
+#include "srsran/ran/cause/ngap_cause.h"
 
 using namespace srsran;
 using namespace srsran::srs_cu_cp;
@@ -31,16 +31,12 @@ using namespace asn1::rrc_nr;
 rrc_reconfiguration_procedure::rrc_reconfiguration_procedure(rrc_ue_context_t&                            context_,
                                                              const rrc_reconfiguration_procedure_request& args_,
                                                              rrc_ue_reconfiguration_proc_notifier& rrc_ue_notifier_,
-                                                             rrc_ue_control_notifier&              ngap_ctrl_notifier_,
-                                                             rrc_ue_du_processor_notifier&         du_proc_notifier_,
                                                              rrc_ue_event_manager&                 event_mng_,
-                                                             rrc_ue_srb_handler&                   srb_notifier_,
+                                                             rrc_ue_control_message_handler&       srb_notifier_,
                                                              rrc_ue_logger&                        logger_) :
   context(context_),
   args(args_),
   rrc_ue(rrc_ue_notifier_),
-  ngap_ctrl_notifier(ngap_ctrl_notifier_),
-  du_processor_notifier(du_proc_notifier_),
   event_mng(event_mng_),
   srb_notifier(srb_notifier_),
   logger(logger_)
@@ -77,19 +73,9 @@ void rrc_reconfiguration_procedure::operator()(coro_context<async_task<bool>>& c
     logger.log_debug("\"{}\" finished successfully", name());
     procedure_result = true;
   } else {
-    logger.log_warning("\"{}\" timed out after {}ms", name(), context.cfg.rrc_procedure_timeout_ms);
-    // Notify NGAP to request UE context release from AMF
-    CORO_AWAIT_VALUE(release_request_sent,
-                     ngap_ctrl_notifier.on_ue_context_release_request(
-                         {context.ue_index, {}, cause_radio_network_t::release_due_to_ngran_generated_reason}));
-    if (!release_request_sent) {
-      // If NGAP release request was not sent to AMF, release UE from DU processor, RRC and F1AP
-      CORO_AWAIT(
-          du_processor_notifier.on_ue_context_release_command({context.ue_index, cause_radio_network_t::unspecified}));
-    }
+    logger.log_warning("\"{}\" timed out after {}ms", name(), context.cfg.rrc_procedure_timeout_ms.count());
   }
 
-  logger.log_debug("\"{}\" finalized", name());
   CORO_RETURN(procedure_result);
 }
 

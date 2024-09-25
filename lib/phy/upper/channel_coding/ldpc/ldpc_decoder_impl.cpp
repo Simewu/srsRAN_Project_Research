@@ -57,10 +57,10 @@ void ldpc_decoder_impl::init(const configuration& cfg)
   specific_init();
 }
 
-optional<unsigned> ldpc_decoder_impl::decode(bit_buffer&                      output,
-                                             span<const log_likelihood_ratio> input,
-                                             crc_calculator*                  crc,
-                                             const configuration&             cfg)
+std::optional<unsigned> ldpc_decoder_impl::decode(bit_buffer&                      output,
+                                                  span<const log_likelihood_ratio> input,
+                                                  crc_calculator*                  crc,
+                                                  const configuration&             cfg)
 {
   init(cfg);
 
@@ -90,7 +90,7 @@ optional<unsigned> ldpc_decoder_impl::decode(bit_buffer&                      ou
     if (crc == nullptr) {
       output.one();
     }
-    return nullopt;
+    return std::nullopt;
   }
 
   // Ensure check-to-variable messages are not initialized.
@@ -122,12 +122,13 @@ optional<unsigned> ldpc_decoder_impl::decode(bit_buffer&                      ou
       update_soft_bits(i_layer);
     }
 
-    // If a CRC calculator was passed with the configuration parameters
+    // If a CRC calculator was passed with the configuration parameters.
     if (crc != nullptr) {
-      get_hard_bits(output);
+      // Get hard bits.
+      bool success = get_hard_bits(output);
 
-      // Early stop
-      if (crc->calculate(output.first(nof_significant_bits)) == 0) {
+      // Early stop. The hard bits must be successful.
+      if (success && crc->calculate(output.first(nof_significant_bits)) == 0) {
         return i_iteration + 1;
       }
     }
@@ -159,8 +160,15 @@ void ldpc_decoder_impl::load_soft_bits(span<const log_likelihood_ratio> llrs)
   soft_bits_view = soft_bits_view.last(soft_bits_view.size() - 2 * node_size_byte);
   for (unsigned i_node = 2 * node_size_byte, max_node = nof_full_nodes * node_size_byte; i_node != max_node;
        i_node += node_size_byte) {
-    srsvec::copy(soft_bits_view.first(lifting_size), llr_view.first(lifting_size));
+    // Copy input LLR in the soft bits.
+    clamp(soft_bits_view.first(lifting_size), llr_view.first(lifting_size), soft_bits_clamp_low, soft_bits_clamp_high);
+
+    // Advance input LLR.
     llr_view = llr_view.last(llr_view.size() - lifting_size);
+
+    // Zero node tail soft bits.
+    srsvec::zero(soft_bits_view.subspan(lifting_size, node_size_byte - lifting_size));
+
     // Recall that soft bits may have zero padding in SIMD implementations (i.e., when node_size_byte != lifting_size).
     soft_bits_view = soft_bits_view.last(soft_bits_view.size() - node_size_byte);
   }
@@ -168,7 +176,10 @@ void ldpc_decoder_impl::load_soft_bits(span<const log_likelihood_ratio> llrs)
   // The length of llrs may not be an exact multiple of the lifting size.
   unsigned tail_positions = llr_view.size();
   if (tail_positions != 0) {
+    // Copy last LLRs.
     srsvec::copy(soft_bits_view.first(tail_positions), llr_view);
+    // Zero the remaining soft bits.
+    srsvec::zero(soft_bits_view.subspan(tail_positions, node_size_byte - lifting_size));
   }
 }
 

@@ -45,7 +45,7 @@ pdu_session_resource_setup_validation_outcome srsran::srs_cu_cp::verify_pdu_sess
         // Add failed psi to response
         cu_cp_pdu_session_res_setup_failed_item failed_item;
         failed_item.pdu_session_id              = psi;
-        failed_item.unsuccessful_transfer.cause = cause_radio_network_t::multiple_pdu_session_id_instances;
+        failed_item.unsuccessful_transfer.cause = ngap_cause_radio_network_t::multiple_pdu_session_id_instances;
         verification_outcome.response.pdu_session_res_failed_to_setup_items.emplace(psi, failed_item);
       }
     }
@@ -64,15 +64,15 @@ pdu_session_resource_setup_validation_outcome srsran::srs_cu_cp::verify_pdu_sess
   // If Non-GBR QoS flow present then PDU Session Aggregate Maximum Bit Rate must be present
   for (auto& psi : psis) {
     for (const auto& qos_flow_item : request.pdu_session_res_setup_items[psi].qos_flow_setup_request_items) {
-      if (qos_flow_item.qos_flow_level_qos_params.reflective_qos_attribute.has_value() ||
-          qos_flow_item.qos_flow_level_qos_params.add_qos_flow_info.has_value()) {
+      if (qos_flow_item.qos_flow_level_qos_params.reflective_qos_attribute_subject_to ||
+          qos_flow_item.qos_flow_level_qos_params.add_qos_flow_info) {
         if (!asn1_request->ue_aggr_max_bit_rate_present) {
           ue_logger.log_warning("Non-GBR QoS flow for {} present but PduSessionAggregateMaximumBitRate not set", psi);
           failed_psis.emplace(psi);
           // Add failed psi to response
           cu_cp_pdu_session_res_setup_failed_item failed_item;
           failed_item.pdu_session_id              = psi;
-          failed_item.unsuccessful_transfer.cause = cause_radio_network_t::invalid_qos_combination;
+          failed_item.unsuccessful_transfer.cause = ngap_cause_radio_network_t::invalid_qos_combination;
           verification_outcome.response.pdu_session_res_failed_to_setup_items.emplace(psi, failed_item);
           // If single QoS flow fails, then the whole PDU session fails
           break;
@@ -116,7 +116,7 @@ pdu_session_resource_modify_validation_outcome srsran::srs_cu_cp::verify_pdu_ses
         // Add failed psi to response
         cu_cp_pdu_session_res_setup_failed_item failed_item;
         failed_item.pdu_session_id              = psi;
-        failed_item.unsuccessful_transfer.cause = cause_radio_network_t::multiple_pdu_session_id_instances;
+        failed_item.unsuccessful_transfer.cause = ngap_cause_radio_network_t::multiple_pdu_session_id_instances;
         verification_outcome.response.pdu_session_res_failed_to_modify_list.emplace(psi, failed_item);
       }
     }

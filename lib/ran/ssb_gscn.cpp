@@ -134,7 +134,7 @@ static const std::array<ssb_gscn_raster, nof_gscn_raster_fr1> ssb_gscn_raster_ta
 
 // Helper that validates the GSCN of bands with irregular or special rasters.
 static error_type<std::string>
-validate_irregular_gscn_rasters(unsigned gscn, nr_band band, subcarrier_spacing ssb_scs, bs_channel_bandwidth_fr1 bw)
+validate_irregular_gscn_rasters(unsigned gscn, nr_band band, subcarrier_spacing ssb_scs, bs_channel_bandwidth bw)
 {
   bool is_gscn_valid = false;
 
@@ -156,7 +156,7 @@ validate_irregular_gscn_rasters(unsigned gscn, nr_band band, subcarrier_spacing 
     const unsigned n79_large_bw_gscn_first  = 8480U;
     const unsigned n79_large_bw_gscn_step   = 16U;
     const unsigned n79_large_bw_gscn_last   = 8880U;
-    if (bw < bs_channel_bandwidth_fr1::MHz40) {
+    if (bw < bs_channel_bandwidth::MHz40) {
       is_gscn_valid = gscn >= n79_narrow_bw_gscn_first and gscn <= n79_narrow_bw_gscn_last;
     } else {
       is_gscn_valid = gscn >= n79_large_bw_gscn_first and gscn <= n79_large_bw_gscn_last and
@@ -167,7 +167,7 @@ validate_irregular_gscn_rasters(unsigned gscn, nr_band band, subcarrier_spacing 
     const unsigned n90_narrow_bw_gscn_last  = 6718U;
     const unsigned n90_large_bw_gscn_first  = 6246U;
     const unsigned n90_large_bw_gscn_last   = 6717U;
-    if (bw < bs_channel_bandwidth_fr1::MHz10) {
+    if (bw < bs_channel_bandwidth::MHz10) {
       is_gscn_valid = gscn >= n90_narrow_bw_gscn_first and gscn <= n90_narrow_bw_gscn_last;
     } else {
       is_gscn_valid = gscn >= n90_large_bw_gscn_first and gscn <= n90_large_bw_gscn_last;
@@ -178,15 +178,15 @@ validate_irregular_gscn_rasters(unsigned gscn, nr_band band, subcarrier_spacing 
     is_gscn_valid = std::find(gscn_band_n102.begin(), gscn_band_n102.end(), gscn) != gscn_band_n102.end();
   }
 
-  return is_gscn_valid ? error_type<std::string>{}
-                       : error_type<std::string>{
-                             fmt::format("GSCN {} is not valid for band {} with SSB SCS {}", gscn, band, ssb_scs)};
+  return is_gscn_valid
+             ? error_type<std::string>{}
+             : make_unexpected(fmt::format("GSCN {} is not valid for band {} with SSB SCS {}", gscn, band, ssb_scs));
 }
 
-error_type<std::string> srsran::band_helper::is_gscn_valid_given_band(unsigned                 gscn,
-                                                                      nr_band                  band,
-                                                                      subcarrier_spacing       ssb_scs,
-                                                                      bs_channel_bandwidth_fr1 bw)
+error_type<std::string> srsran::band_helper::is_gscn_valid_given_band(unsigned             gscn,
+                                                                      nr_band              band,
+                                                                      subcarrier_spacing   ssb_scs,
+                                                                      bs_channel_bandwidth bw)
 {
   // Search for the GSCN in the table of regular rasters, first.
   for (const ssb_gscn_raster& raster : ssb_gscn_raster_table_fr1) {
@@ -195,10 +195,11 @@ error_type<std::string> srsran::band_helper::is_gscn_valid_given_band(unsigned  
           ((gscn - raster.gscn_first) % raster.gscn_step) == 0) {
         return {};
       }
-      return {fmt::format("GSCN must be within the interval [{},{}], in steps of {}, for the chosen band",
-                          raster.gscn_first,
-                          raster.gscn_last,
-                          raster.gscn_step)};
+      return make_unexpected(
+          fmt::format("GSCN must be within the interval [{},{}], in steps of {}, for the chosen band",
+                      raster.gscn_first,
+                      raster.gscn_last,
+                      raster.gscn_step));
     }
   }
 
@@ -275,7 +276,7 @@ double band_helper::get_ss_ref_from_gscn(unsigned gscn)
   return ss_ref;
 }
 
-optional<unsigned> srsran::band_helper::get_gscn_from_ss_ref(double ss_ref_hz)
+std::optional<unsigned> srsran::band_helper::get_gscn_from_ss_ref(double ss_ref_hz)
 {
   // The following is based on Table 5.4.3.1-1, TS 38.104.
   if (ss_ref_hz < N_REF_OFFSET_3_GHZ_24_5_GHZ) {
@@ -307,5 +308,5 @@ optional<unsigned> srsran::band_helper::get_gscn_from_ss_ref(double ss_ref_hz)
     }
   }
 
-  return nullopt;
+  return std::nullopt;
 }

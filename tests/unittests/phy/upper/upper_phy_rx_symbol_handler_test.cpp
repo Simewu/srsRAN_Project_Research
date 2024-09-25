@@ -44,6 +44,7 @@ protected:
   upper_phy_rx_symbol_handler_impl           rx_handler;
   prach_buffer_spy                           buffer_dummy;
   resource_grid_dummy                        rg;
+  shared_resource_grid_spy                   shared_rg;
 
   void handle_prach_symbol()
   {
@@ -56,51 +57,63 @@ protected:
 
   void handle_pusch_pdu()
   {
+    const unsigned nof_symbols = 2;
+
     uplink_processor::pusch_pdu pdu = {};
+    pdu.pdu.start_symbol_index      = 2;
+    pdu.pdu.nof_symbols             = nof_symbols;
     pdu.pdu.cp                      = cyclic_prefix::NORMAL;
     pdu.pdu.codeword.emplace(pusch_processor::codeword_description{0, ldpc_base_graph_type::BG1, true});
 
     pdu_repo.add_pusch_pdu(slot_point(0, 0, 0), pdu);
 
-    // Uplink processor gets called when all symbols have been received.
-    for (unsigned i = 0, e = get_nsymb_per_slot(pdu.pdu.cp); i != e; ++i) {
+    // Uplink processor gets called on the last symbol allocated in this PDU.
+    for (unsigned i = 0, e = pdu.pdu.start_symbol_index + nof_symbols; i != e; ++i) {
       upper_phy_rx_symbol_context ctx = {};
       ctx.symbol                      = i;
       ctx.slot                        = slot_point(0, 0, 0);
-      rx_handler.handle_rx_symbol(ctx, rg.get_reader());
+      rx_handler.handle_rx_symbol(ctx, shared_rg.get_grid());
     }
   }
 
   void handle_late_pusch_pdu()
   {
+    const unsigned nof_symbols = 2;
+
     uplink_processor::pusch_pdu pdu = {};
+    pdu.pdu.start_symbol_index      = 2;
+    pdu.pdu.nof_symbols             = nof_symbols;
     pdu.pdu.cp                      = cyclic_prefix::NORMAL;
     pdu.pdu.codeword.emplace(pusch_processor::codeword_description{0, ldpc_base_graph_type::BG1, true});
 
     pdu_repo.add_pusch_pdu(slot_point(0, 0, 0), pdu);
 
     // Uplink processor gets called for a slot that does not correspond with the PUSCH PDU.
-    for (unsigned i = 0, e = get_nsymb_per_slot(pdu.pdu.cp); i != e; ++i) {
+    for (unsigned i = 0, e = pdu.pdu.start_symbol_index + nof_symbols; i != e; ++i) {
       upper_phy_rx_symbol_context ctx = {};
       ctx.symbol                      = i;
       ctx.slot                        = slot_point(0, 0, 1);
-      rx_handler.handle_rx_symbol(ctx, rg.get_reader());
+      rx_handler.handle_rx_symbol(ctx, shared_rg.get_grid());
     }
   }
 
   void handle_pucch_pdu()
   {
+    const unsigned nof_symbols = 2;
+
     uplink_processor::pucch_pdu pdu = {};
+    pdu.format0.start_symbol_index  = 2;
+    pdu.format0.nof_symbols         = nof_symbols;
     pdu.format0.cp                  = cyclic_prefix::NORMAL;
 
     pdu_repo.add_pucch_pdu(slot_point(0, 0, 0), pdu);
 
-    // Uplink processor gets called when all symbols have been received.
-    for (unsigned i = 0, e = get_nsymb_per_slot(pdu.format0.cp); i != e; ++i) {
+    // Uplink processor gets called on the last symbol allocated in this PDU.
+    for (unsigned i = 0, e = pdu.format0.start_symbol_index + nof_symbols; i != e; ++i) {
       upper_phy_rx_symbol_context ctx = {};
       ctx.symbol                      = i;
       ctx.slot                        = slot_point(0, 0, 0);
-      rx_handler.handle_rx_symbol(ctx, rg.get_reader());
+      rx_handler.handle_rx_symbol(ctx, shared_rg.get_grid());
     }
   }
 
@@ -108,11 +121,8 @@ protected:
     rm_buffer_pool(create_rx_buffer_pool(rx_buffer_pool_config{16, 2, 2, 16})),
     ul_processor_pool(create_ul_processor_pool()),
     pdu_repo(2),
-    rx_handler(*ul_processor_pool,
-               pdu_repo,
-               rm_buffer_pool->get_pool(),
-               rx_results_wrapper,
-               srslog::fetch_basic_logger("TEST", true))
+    rx_handler(*ul_processor_pool, pdu_repo, rm_buffer_pool->get_pool(), rx_results_wrapper),
+    shared_rg(rg)
   {
     srslog::fetch_basic_logger("TEST").set_level(srslog::basic_levels::warning);
     srslog::init();

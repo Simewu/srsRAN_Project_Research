@@ -24,11 +24,13 @@
 
 #include "ofh_data_flow_uplane_downlink_data.h"
 #include "sequence_identifier_generator.h"
+#include "srsran/instrumentation/traces/ofh_traces.h"
 #include "srsran/ofh/compression/iq_compressor.h"
 #include "srsran/ofh/ecpri/ecpri_packet_builder.h"
 #include "srsran/ofh/ethernet/vlan_ethernet_frame_builder.h"
 #include "srsran/ofh/serdes/ofh_uplane_message_builder.h"
 #include "srsran/ran/cyclic_prefix.h"
+#include "srsran/srslog/srslog.h"
 
 namespace srsran {
 struct resource_grid_context;
@@ -45,6 +47,8 @@ struct data_flow_uplane_downlink_data_impl_config {
   cyclic_prefix cp;
   /// RU bandwidth in PRBs.
   unsigned ru_nof_prbs;
+  /// Downlink eAxCs.
+  static_vector<unsigned, MAX_NOF_SUPPORTED_EAXC> dl_eaxc;
   /// VLAN frame parameters.
   ether::vlan_frame_params vlan_params;
   /// Compression parameters.
@@ -67,6 +71,33 @@ struct data_flow_uplane_downlink_data_impl_dependencies {
   std::unique_ptr<uplane_message_builder> up_builder;
 };
 
+/// Stores trace names used by the \c data_flow_uplane_downlink_data_impl class when OFH tracing is enabled.
+template <bool Enabled = true>
+class ofh_uplane_trace_names
+{
+  std::array<std::string, MAX_SUPPORTED_EAXC_ID_VALUE> trace_names;
+
+public:
+  explicit ofh_uplane_trace_names(span<const unsigned> dl_eaxc)
+  {
+    for (unsigned eaxc : dl_eaxc) {
+      trace_names[eaxc] = fmt::format("ofh_uplane_eaxc_{}", eaxc);
+    }
+  }
+
+  const std::string& operator[](std::size_t eaxc) const { return trace_names[eaxc]; }
+};
+
+/// Specialization of ofh_uplane_trace_names used when OFH event tracing is disabled.
+template <>
+class ofh_uplane_trace_names<false>
+{
+public:
+  explicit ofh_uplane_trace_names(span<const unsigned> dl_eaxc) {}
+
+  const std::string operator[](std::size_t eaxc) const { return ""; }
+};
+
 /// Open Fronthaul User-Plane downlink data flow implementation.
 class data_flow_uplane_downlink_data_impl : public data_flow_uplane_downlink_data
 {
@@ -76,15 +107,15 @@ public:
 
   // See interface for documentation.
   void enqueue_section_type_1_message(const data_flow_uplane_resource_grid_context& context,
-                                      const resource_grid_reader&                   grid) override;
+                                      const shared_resource_grid&                   grid) override;
 
 private:
   /// Enqueues an User-Plane message burst.
   void enqueue_section_type_1_message_symbol_burst(const data_flow_uplane_resource_grid_context& context,
-                                                   const resource_grid_reader&                   grid);
+                                                   const shared_resource_grid&                   grid);
 
   /// Enqueues an User-Plane message symbol with the given context and grid.
-  unsigned enqueue_section_type_1_message_symbol(span<const cf_t>             iq_symbol_data,
+  unsigned enqueue_section_type_1_message_symbol(span<const cbf16_t>          iq_symbol_data,
                                                  const uplane_message_params& params,
                                                  unsigned                     eaxc,
                                                  span<uint8_t>                buffer);
@@ -96,12 +127,12 @@ private:
   const ether::vlan_frame_params             vlan_params;
   const ru_compression_params                compr_params;
   sequence_identifier_generator              up_seq_gen;
-  std::shared_ptr<ether::eth_frame_pool>     frame_pool_ptr;
-  ether::eth_frame_pool&                     frame_pool;
+  std::shared_ptr<ether::eth_frame_pool>     frame_pool;
   std::unique_ptr<iq_compressor>             compressor_sel;
   std::unique_ptr<ether::vlan_frame_builder> eth_builder;
   std::unique_ptr<ecpri::packet_builder>     ecpri_builder;
   std::unique_ptr<uplane_message_builder>    up_builder;
+  ofh_uplane_trace_names<OFH_TRACE_ENABLED>  formatted_trace_names;
 };
 
 } // namespace ofh

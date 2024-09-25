@@ -43,6 +43,7 @@
 #include "srsran/ran/sch/modulation_scheme.h"
 #include "srsran/ran/slot_pdu_capacity_constants.h"
 #include "srsran/ran/slot_point.h"
+#include "srsran/ran/srs/srs_configuration.h"
 #include "srsran/ran/subcarrier_spacing.h"
 #include "srsran/ran/uci/uci_configuration.h"
 #include "srsran/scheduler/config/bwp_configuration.h"
@@ -68,8 +69,14 @@ struct pdsch_precoding_info {
   static_vector<prg_info, precoding_constants::MAX_NOF_PRG> prg_infos;
 };
 
+/// Transmit power information associated with PDCCH PDU.
 struct tx_power_pdcch_information {
-  // TODO
+  /// Ratio of NZP CSI-RS EPRE to SSB/PBCH block EPRE. See 3GPP TS 38.214, clause 5.2.2.3.1. Values {-3, 0, 3, 6} dB.
+  /// \remark If the UE has not been provided dedicated higher layer parameters, the UE may assume that the ratio of
+  /// PDCCH DMRS EPRE to SSS EPRE is within -8 dB and 8 dB when the UE monitors PDCCHs for a DCI format 1_0 with CRC
+  /// scrambled by SI-RNTI, P-RNTI, or RA-RNTI. See TS 38.213, clause 4.1.
+  /// \remark [Implementation-defined] In case UE is not configured with powerControlOffsetSS we assume it to be 0dB.
+  int8_t pwr_ctrl_offset_ss{0};
 };
 
 struct dmrs_information {
@@ -111,7 +118,7 @@ struct dci_context_information {
   /// Starting symbol of the Search Space.
   unsigned starting_symbol;
   /// Precoding info used for this DCI. This field is empty in case of 1 antenna port.
-  optional<pdcch_precoding_info> precoding_info;
+  std::optional<pdcch_precoding_info> precoding_info;
   /// Transmission power information used for this DCI.
   tx_power_pdcch_information tx_pwr;
   /// Parameter \f$N_{ID}\f$ used for PDCCH DMRS scrambling as per TS38.211, 7.4.1.3.1. Values: {0, ..., 65535}.
@@ -125,7 +132,7 @@ struct dci_context_information {
     /// DCI format string.
     const char* dci_format;
     /// Number of slots the UE is expected to wait before transmitting a DL HARQ-ACK, upon a PDSCH reception.
-    optional<unsigned> harq_feedback_timing;
+    std::optional<unsigned> harq_feedback_timing;
   } context;
 };
 
@@ -162,6 +169,17 @@ struct pdsch_codeword {
   bool new_data;
 };
 
+/// Transmit power information associated with PDSCH PDU.
+struct tx_power_pdsch_information {
+  /// Ratio of PDSCH EPRE to NZP CSI-RS EPRE when UE derives CSI feedback. See 3GPP TS 38.214, clause 5.2.2.3.1. Values
+  /// {-8,...,15} dB with 1 dB step size.
+  /// \remark [Implementation-defined] In case UE is not configured with powerControlOffset we assume it to be 0dB.
+  int8_t pwr_ctrl_offset{0};
+  /// Ratio of NZP CSI-RS EPRE to SSB/PBCH block EPRE. See 3GPP TS 38.214, clause 5.2.2.3.1. Values {-3, 0, 3, 6} dB.
+  /// \remark [Implementation-defined] In case UE is not configured with powerControlOffsetSS we assume it to be 0dB.
+  int8_t pwr_ctrl_offset_ss{0};
+};
+
 /// \brief Information relative to a PDSCH grant in a given slot.
 struct pdsch_information {
   rnti_t                                                 rnti;
@@ -182,7 +200,9 @@ struct pdsch_information {
   /// HARQ process number as per TS38.212 Section 7.3.1.1. Values: {0,...,15}.
   harq_id_t harq_id;
   /// Precoding information for the PDSCH. This field is empty in case of 1-antenna port setups.
-  optional<pdsch_precoding_info> precoding;
+  std::optional<pdsch_precoding_info> precoding;
+  /// Transmit power information for the PDSCH.
+  tx_power_pdsch_information tx_pwr_info;
 };
 
 /// Dummy MAC CE payload.
@@ -201,7 +221,7 @@ struct dl_msg_lc_info {
   /// Number of scheduled bytes for this specific logical channel. {0..65535}.
   unsigned sched_bytes;
   /// Holds payload of CE except UE Contention Resolution Identity.
-  variant<ta_cmd_ce_payload, dummy_ce_payload> ce_payload;
+  std::variant<ta_cmd_ce_payload, dummy_ce_payload> ce_payload;
 };
 
 struct dl_msg_tb_info {
@@ -225,8 +245,10 @@ struct dl_msg_alloc {
     search_space_id ss_id;
     /// Number of times the HARQ process has been retransmitted.
     unsigned nof_retxs;
+    /// Current UE DL buffer occupancy, after this PDSCH grant.
+    unsigned buffer_occupancy;
     /// Offset that the OLLA algorithm applied to the DL MCS candidate to account for channel impairments.
-    optional<float> olla_offset;
+    std::optional<float> olla_offset;
   } context;
 };
 
@@ -306,11 +328,11 @@ struct uci_info {
     uint8_t beta_offset_csi_1 = 13;
     /// \f$\beta^{CSI-2}_{offset}\f$ parameter, as per Section 9.3, TS 38.213.
     /// If set, the CSI report includes CSI Part 2.
-    optional<uint8_t> beta_offset_csi_2;
+    std::optional<uint8_t> beta_offset_csi_2;
   };
 
-  optional<harq_info> harq;
-  optional<csi_info>  csi;
+  std::optional<harq_info> harq;
+  std::optional<csi_info>  csi;
   /// \f$\alpha\f$ parameter, as per Section 6.3.2.4.1.1-3, TS 38.212.
   alpha_scaling_opt alpha;
 };
@@ -350,9 +372,9 @@ struct ssb_information {
 /// Stores the information associated with an SIB1 or other SI allocation.
 struct sib_information {
   enum si_indicator_type { sib1, other_si } si_indicator;
-  optional<uint8_t> si_msg_index;
-  unsigned          nof_txs;
-  pdsch_information pdsch_cfg;
+  std::optional<uint8_t> si_msg_index;
+  unsigned               nof_txs;
+  pdsch_information      pdsch_cfg;
 };
 
 /// See ORAN WG8, 9.2.3.3.12 - Downlink Broadcast Allocation.
@@ -397,9 +419,9 @@ struct csi_rs_info {
   /// \brief ScramblingID of the CSI-RS as per 3GPP TS 38.214, sec 5.2.2.3.1. Values: {0,...,1023}.
   uint16_t scrambling_id;
   /// Ratio of PDSCH EPRE to NZP CSI-RS EPRE as per 3GPP TS 38.214, clause 5.2.2.3.1. Values: {-8,...,15}.
-  int8_t power_ctrl_offset_profile_nr;
+  int8_t power_ctrl_offset;
   /// Ratio of NZP CSI-RS EPRE to SSB/PBCH block EPRE. Values: {-3,0,3,6}.
-  int8_t power_ctrl_offset_ss_profile_nr;
+  int8_t power_ctrl_offset_ss;
 };
 
 struct dl_sched_result {
@@ -429,8 +451,8 @@ struct dl_sched_result {
 };
 
 struct ul_sched_info {
-  pusch_information  pusch_cfg;
-  optional<uci_info> uci;
+  pusch_information       pusch_cfg;
+  std::optional<uci_info> uci;
 
   /// \brief Information relative to a PDSCH allocation decision that is used for the purpose of logging or
   /// tracing, but not passed to the PHY.
@@ -442,9 +464,9 @@ struct ul_sched_info {
     /// Number of times the HARQ process has been retransmitted.
     unsigned nof_retxs;
     /// Delay between PDSCH message with RAR and its corresponding PUSCH.
-    optional<unsigned> msg3_delay;
+    std::optional<unsigned> msg3_delay;
     /// Offset that the OLLA algorithm applied to derive the UL MCS.
-    optional<float> olla_offset;
+    std::optional<float> olla_offset;
   } context;
 };
 
@@ -473,6 +495,15 @@ struct prach_occasion_info {
 
 /// Info about PUCCH used resource.
 struct pucch_info {
+  /// This information only is used by the scheduler and not passed to the PHY.
+  struct context {
+    /// Identifier of the PUCCH PDU within the list of PUCCH PDUs for a given slot. The ID is only meaningful for a
+    /// given UE; i.e., different UEs can reuse the same ID, but a UE cannot reuse the same ID for different PDUs.
+    unsigned id = MAX_PUCCH_PDUS_PER_SLOT;
+    /// Determines whether the PUCCH PDU uses common resources.
+    bool is_common = false;
+  };
+
   rnti_t                   crnti;
   const bwp_configuration* bwp_cfg;
   pucch_format             format;
@@ -486,7 +517,58 @@ struct pucch_info {
     pucch_format_4 format_4;
   };
   /// In case the PUCCH will contain CSI bits, this struct contains information how those bits are to be decoded.
-  optional<csi_report_configuration> csi_rep_cfg;
+  std::optional<csi_report_configuration> csi_rep_cfg;
+
+  context pdu_context;
+};
+
+struct srs_info {
+  rnti_t                   crnti;
+  const bwp_configuration* bwp_cfg;
+  uint8_t                  nof_antenna_ports;
+  /// Symbols used for this SRS resource, starting from \f$l_0\f$ until \f$l_0 + n^{SRS}_{symb}\f$, as per
+  /// Section 6.4.1.4.1, TS 38.211.
+  ofdm_symbol_range symbols;
+  /// Repetition factor \f$R\f$, or \c repetitionFactor, as per \c SRS-Resource, in \c SRS-Config, TS 38.331.
+  /// \remark As per TS 38.211, Section 6.4.1.4.3, the number of repetitions must be not greater than the \ref symbols
+  /// length.
+  srs_nof_symbols nof_repetitions;
+  /// Configuration index, given by \c c_SRS, as per \c freqHopping, \c SRS-Resource, in \c SRS-Config, TS 38.331.
+  /// Values {0,...,63}.
+  uint8_t config_index;
+  /// SRS sequence ID or \c sequenceId, as per \c SRS-Resource, in \c SRS-Config, TS 38.331.
+  /// Values {0,...,1023}.
+  unsigned sequence_id;
+  /// Bandwidth index, given by \c b_SRS, as per \c freqHopping, \c SRS-Resource, in \c SRS-Config, TS 38.331.
+  /// Values {0,...,3}.
+  uint8_t bw_index;
+  /// Transmission comb size, as per \c transmissionComb, in \c SRS-Config, TS 38.331, or \f$K_{TC}\f$, as per
+  /// Section 6.4.1.4.1, TS 38.211.
+  tx_comb_size tx_comb;
+  /// Transmission comb offset, given in \c combOffset-n2 or \c combOffset-n4, \c transmissionComb, \c SRS-Resource,
+  /// in \c SRS-Config, TS 38.331. Values {0, 1} if tx_comb_size == 2, {0,...,3} if tx_comb_size == 4.
+  uint8_t comb_offset;
+  /// Cyclic shift, given in \c cyclicShift-n2 or \c cyclicShift-n4, \c transmissionComb, \c SRS-Resource, in \c
+  /// SRS-Config, TS 38.331. Values {0,...,7} if tx_comb_size == 2, {0,...,11} if tx_comb_size == 4.
+  uint8_t cyclic_shift;
+  /// Frequency domain position \c freqDomainPosition, \c SRS-Resource, in \c SRS-Config, TS 38.331.
+  /// Values {0,...,67}.
+  uint8_t freq_position;
+  /// Frequency domain shift \c freqDomainShift, \c SRS-Resource, in \c SRS-Config, TS 38.331.
+  /// Values {0,...,268}.
+  unsigned freq_shift;
+  /// Frequency hopping \c b_hop, as per \c freqHopping, \c SRS-Resource, in \c SRS-Config, TS 38.331.
+  /// Values {0,...,3}.
+  uint8_t                       freq_hopping;
+  srs_group_or_sequence_hopping group_or_seq_hopping;
+  srs_resource_type             resource_type;
+  /// SRS periodicity in slots, as per \c SRS-PeriodicityAndOffset, in \c SRS-Config, TS 38.331.
+  /// \remark Only applies if resource_type == periodic or resource_type == semi_persistent.
+  srs_periodicity t_srs_period;
+  /// SRS offset in slots, as per \c SRS-PeriodicityAndOffset, in \c SRS-Config, TS 38.331.
+  /// Values { 0,...,t_srs_period - 1}.
+  /// \remark Only applies if resource_type == periodic or resource_type == semi_persistent.
+  unsigned t_offset;
 };
 
 struct ul_sched_result {
@@ -498,6 +580,8 @@ struct ul_sched_result {
   static_vector<prach_occasion_info, MAX_PRACH_OCCASIONS_PER_SLOT> prachs;
   /// PUCCH grants allocated in the current slot.
   static_vector<pucch_info, MAX_PUCCH_PDUS_PER_SLOT> pucchs;
+  /// SRS grants allocated in the current slot.
+  static_vector<srs_info, MAX_PUCCH_PDUS_PER_SLOT> srss;
 };
 
 /// Scheduler decision made for DL and UL in a given slot.

@@ -18,30 +18,27 @@
 # and at http://www.gnu.org/licenses/.
 #
 
-add_library(du_processor_test_helpers du_processor_test_helpers.cpp du_processor_routine_manager_test_helpers.cpp)
+add_library(du_processor_test_helpers du_processor_test_helpers.cpp)
 target_include_directories(du_processor_test_helpers PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(du_processor_test_helpers
         cu_cp_test_helpers
         srsran_cu_cp
-        srsran_e1ap
         e1ap_test_helpers
         f1ap_test_helpers
         ngap_test_helpers
         rrc_ue_test_helpers
+        f1ap_test_doubles
         srsran_support
         f1ap_asn1
         srslog)
 
 set(SOURCES
+        du_configuration_manager_test.cpp
         du_processor_test.cpp
-        pdu_session_resource_setup_routine_test.cpp
-        pdu_session_resource_release_routine_test.cpp
-        pdu_session_resource_modification_routine_test.cpp
-        inter_ngran_node_n2_handover_routine_test.cpp
-        ue_context_release_routine_test.cpp
         )
 
 add_executable(du_processor_test ${SOURCES})
 target_include_directories(du_processor_test PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(du_processor_test du_processor_test_helpers srsran_support srslog gtest gtest_main)
-gtest_discover_tests(du_processor_test PROPERTIES "LABELS;du_processor")
+add_test(du_processor_test du_processor_test)
+set_tests_properties(du_processor_test PROPERTIES LABELS "LABELS;du_processor")

@@ -30,8 +30,10 @@
 #include "srsran/ran/prach/prach_constants.h"
 #include "srsran/ran/prach/prach_frequency_mapping.h"
 #include "srsran/ran/prach/prach_preamble_information.h"
+#include "srsran/srsvec/copy.h"
 #include <mutex>
 #include <numeric>
+#include <optional>
 
 namespace srsran {
 namespace ofh {
@@ -68,8 +70,8 @@ public:
   prach_context() = default;
 
   /// Constructs an uplink PRACH context with the given PRACH buffer and PRACH buffer context.
-  prach_context(const prach_buffer_context& context, prach_buffer& buffer) :
-    context_info({context, &buffer}), nof_symbols(get_preamble_duration(context.format))
+  prach_context(const prach_buffer_context& context, prach_buffer& buffer, std::optional<unsigned> start_symbol_) :
+    context_info({context, &buffer})
   {
     srsran_assert(context.nof_fd_occasions == 1, "Only supporting one frequency domain occasion");
     srsran_assert(context.nof_td_occasions == 1, "Only supporting one time domain occasion");
@@ -82,12 +84,12 @@ public:
 
     freq_mapping_info = prach_frequency_mapping_get(preamble_info.scs, context.pusch_scs);
 
-    if (!nof_symbols) {
-      nof_symbols = 1;
-    }
-    // Initialize statistic.
+    nof_symbols  = preamble_info.nof_symbols;
+    start_symbol = start_symbol_.value_or(context_info.context.start_symbol);
+
+    // Initialize statistics.
     for (unsigned i = 0; i != nof_symbols; ++i) {
-      buffer_stats.push_back({buffer.get_max_nof_ports(), preamble_info.sequence_length});
+      buffer_stats.emplace_back(buffer.get_max_nof_ports(), preamble_info.sequence_length);
     }
   }
 
@@ -115,9 +117,16 @@ public:
   }
 
   /// Writes the given IQ buffer corresponding to the given symbol and port.
-  void write_iq(unsigned port, unsigned symbol, unsigned re_start, span<const cf_t> iq_buffer)
+  void write_iq(unsigned port, unsigned symbol, unsigned re_start, span<const cbf16_t> iq_buffer)
   {
-    symbol -= context_info.context.start_symbol;
+    if (is_long_preamble(context_info.context.format)) {
+      // Some RUs always set PRACH symbolId to 0 when long format is used ignoring the value indicated in C-Plane.
+      if (symbol >= start_symbol) {
+        symbol -= start_symbol;
+      }
+    } else {
+      symbol -= start_symbol;
+    }
 
     srsran_assert(context_info.buffer, "No valid PRACH buffer in the context");
     srsran_assert(symbol < nof_symbols, "Invalid symbol index");
@@ -128,13 +137,13 @@ public:
     }
 
     // Update the buffer.
-    span<cf_t> prach_out_buffer = context_info.buffer->get_symbol(
+    span<cbf16_t> prach_out_buffer = context_info.buffer->get_symbol(
         port, context_info.context.nof_fd_occasions - 1, context_info.context.nof_td_occasions - 1, symbol);
 
     srsran_assert(prach_out_buffer.last(prach_out_buffer.size() - re_start).size() >= iq_buffer.size(),
                   "Invalid IQ data buffer size to copy as it does not fit into the PRACH buffer");
 
-    std::copy(iq_buffer.begin(), iq_buffer.end(), prach_out_buffer.begin() + re_start);
+    srsvec::copy(prach_out_buffer.subspan(re_start, iq_buffer.size()), iq_buffer);
 
     // Update statistics.
     buffer_stats[symbol].re_written[port].fill(re_start, re_start + iq_buffer.size());
@@ -145,17 +154,20 @@ public:
   expected<prach_context_information> try_getting_complete_prach_buffer() const
   {
     if (!context_info.buffer) {
-      return default_error_t({});
+      return make_unexpected(default_error_t{});
     }
 
     if (!std::all_of(buffer_stats.begin(), buffer_stats.end(), [&](const auto& symbol) {
           return symbol.have_all_res_been_written();
         })) {
-      return default_error_t({});
+      return make_unexpected(default_error_t{});
     }
 
     return {context_info};
   }
+
+  /// Returns the information of this PRACH context.
+  const prach_context_information& get_context_information() const { return context_info; }
 
 private:
   /// PRACH context information
@@ -168,6 +180,8 @@ private:
   prach_frequency_mapping_information freq_mapping_info;
   /// Number of OFDM symbols used by the stored PRACH.
   unsigned nof_symbols;
+  /// OFDM symbol index within the slot marking the start of PRACH preamble after the cyclic prefix.
+  unsigned start_symbol;
 };
 
 /// PRACH context repository.
@@ -176,7 +190,6 @@ class prach_context_repository
   /// System frame number maximum value in this repository.
   static constexpr unsigned SFN_MAX_VALUE = 1U << 8;
 
-  srslog::basic_logger*      logger;
   std::vector<prach_context> buffer;
   //: TODO: make this lock free
   mutable std::mutex mutex;
@@ -198,32 +211,22 @@ class prach_context_repository
   }
 
 public:
-  explicit prach_context_repository(unsigned size_, srslog::basic_logger* logger_ = nullptr) :
-    logger(logger_), buffer(size_)
-  {
-  }
+  explicit prach_context_repository(unsigned size_) : buffer(size_) {}
 
   /// Adds the given entry to the repository at slot.
-  void add(const prach_buffer_context& context, prach_buffer& buffer_, slot_point slot = slot_point())
+  void add(const prach_buffer_context& context,
+           prach_buffer&               buffer_,
+           std::optional<unsigned>     start_symbol,
+           std::optional<slot_point>   slot)
   {
     std::lock_guard<std::mutex> lock(mutex);
 
-    slot_point current_slot = slot.valid() ? slot : context.slot;
-
-    if (logger) {
-      if (!entry(current_slot).empty()) {
-        const prach_buffer_context& previous_context = entry(current_slot).get_context();
-        logger->warning("Missed incoming User-Plane PRACH messages for slot '{}' and sector#{}",
-                        previous_context.slot,
-                        previous_context.sector);
-      }
-    }
-
-    entry(current_slot) = prach_context(context, buffer_);
+    slot_point current_slot = slot.value_or(context.slot);
+    entry(current_slot)     = prach_context(context, buffer_, start_symbol);
   }
 
   /// Function to write the uplink PRACH buffer.
-  void write_iq(slot_point slot, unsigned port, unsigned symbol, unsigned re_start, span<const cf_t> iq_buffer)
+  void write_iq(slot_point slot, unsigned port, unsigned symbol, unsigned re_start, span<const cbf16_t> iq_buffer)
   {
     std::lock_guard<std::mutex> lock(mutex);
     entry(slot).write_iq(port, symbol, re_start, iq_buffer);
@@ -234,6 +237,41 @@ public:
   {
     std::lock_guard<std::mutex> lock(mutex);
     return entry(slot);
+  }
+
+  /// \brief Tries to pop a complete PRACH buffer from the repository.
+  ///
+  /// A PRACH buffer is considered completed when all the PRBs for all the ports have been written. If the pop is
+  /// successful it clears the entry of the repository for that slot.
+  expected<prach_context::prach_context_information> try_poping_complete_prach_buffer(slot_point slot)
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+
+    const auto result = entry(slot).try_getting_complete_prach_buffer();
+
+    // Clear the entry if the pop was a success.
+    if (result.has_value()) {
+      entry(slot) = {};
+    }
+
+    return result;
+  }
+
+  /// Pops a PRACH buffer from the repository.
+  expected<prach_context::prach_context_information> pop_prach_buffer(slot_point slot)
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+
+    auto& context = entry(slot);
+
+    if (context.empty()) {
+      return make_unexpected(default_error_t());
+    }
+
+    const auto result = context.get_context_information();
+    context           = {};
+
+    return result;
   }
 
   /// Clears the given slot entry.

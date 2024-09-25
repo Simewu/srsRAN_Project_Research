@@ -22,27 +22,27 @@
 
 #pragma once
 
-#include "srsran/srsvec/detail/traits.h"
+#include "srsran/srsvec/type_traits.h"
 #include "srsran/srsvec/types.h"
 
 namespace srsran {
 namespace srsvec {
 
 namespace detail {
-const char* find(span<const char> input, char value);
+const char* find(span<const char> input, const char* value);
 }
 
 template <typename T1, typename T2>
 bool equal(const T1& s1, const T2& s2)
 {
-  static_assert(detail::is_span_compatible<T1>::value, "Template type is not compatible with a span");
-  static_assert(detail::is_span_compatible<T2>::value, "Template type is not compatible with a span");
+  static_assert(is_span_compatible<T1>::value, "Template type is not compatible with a span");
+  static_assert(is_span_compatible<T2>::value, "Template type is not compatible with a span");
   srsran_srsvec_assert_size(s1, s2);
 
   return std::equal(s1.begin(), s1.end(), s2.begin(), s2.end());
 }
 
-/// \brief Finds the first value in \input that is equal to \c value.
+/// \brief Finds the first value in \c input that is equal to \c value.
 ///
 /// The implementation is equivalent to:
 /// \code
@@ -59,7 +59,9 @@ template <typename T>
 const T* find(span<const T> input, T value)
 {
   static_assert(sizeof(T) == 1, "The datatype must be one byte wide.");
-  return (const T*)detail::find(span<const char>((const char*)input.data(), input.size()), *((char*)&value));
+  return reinterpret_cast<const T*>(
+      detail::find(span<const char>(reinterpret_cast<const char*>(input.data()), input.size()),
+                   reinterpret_cast<const char*>(&value)));
 }
 
 /// \brief Finds the maximum absolute value in a complex span.
@@ -93,6 +95,22 @@ std::pair<unsigned, float> max_abs_element(span<const cf_t> x);
 /// \param[in] x Input samples.
 /// \return A pair comprising the index and the value of the maximum element.
 std::pair<unsigned, float> max_element(span<const float> x);
+
+/// \brief Counts the number of samples that have a part that exceeds the given threshold.
+///
+/// The implementation is equivalent to:
+/// \code
+///  unsigned count_if_part_abs_greater_than(span<const cf_t> x, float threshold) {
+///   return std::count_if(channel_buffer.begin(), channel_buffer.end(), [threshold](cf_t sample) {
+///     return (std::abs(sample.real()) > threshold) || (std::abs(sample.imag()) > threshold);
+///   });
+/// }
+/// \endcode
+///
+/// \param[in] x         Samples.
+/// \param[in] threshold Detection threshold.
+/// \return The number of samples that have a part that exceeds the threshold.
+unsigned count_if_part_abs_greater_than(span<const cf_t> x, float threshold);
 
 } // namespace srsvec
 } // namespace srsran

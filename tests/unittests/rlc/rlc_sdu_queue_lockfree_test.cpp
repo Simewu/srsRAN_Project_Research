@@ -24,35 +24,45 @@
 #include "lib/rlc/rlc_bearer_logger.h"
 #include "lib/rlc/rlc_sdu_queue_lockfree.h"
 #include "srsran/adt/byte_buffer.h"
+#include "srsran/ran/du_types.h"
 #include "srsran/support/test_utils.h"
 
 namespace srsran {
 
+///  Default value for RLC SDU queue limit in bytes are chosen such that it allows for 4096 PDCP pdus of 1500 of payload
+///  and 7 bytes of PDCP overhead. The SDU limit should be much larger then this, so that the limit is the number of
+///  bytes in the queue, not the number of SDUs, even in the case of small PDUs
+const uint32_t default_rlc_queue_size_sdus  = 16384;
+const uint32_t default_rlc_queue_size_bytes = 4096 * (1500 + 7);
+
 void queue_unqueue_test()
 {
-  rlc_bearer_logger      logger("RLC", {0, du_ue_index_t::MIN_DU_UE_INDEX, rb_id_t(drb_id_t::drb1), "DL"});
-  test_delimit_logger    delimiter{"RLC SDU queue unqueue test"};
-  rlc_sdu_queue_lockfree tx_queue(4096, logger);
+  rlc_bearer_logger   logger("RLC", {gnb_du_id_t::min, du_ue_index_t::MIN_DU_UE_INDEX, rb_id_t(drb_id_t::drb1), "DL"});
+  test_delimit_logger delimiter{"RLC SDU queue unqueue test"};
+
+  rlc_sdu_queue_lockfree tx_queue(default_rlc_queue_size_sdus, default_rlc_queue_size_bytes, logger);
 
   // Write 1 SDU
-  byte_buffer buf       = {0x00, 0x01};
+  byte_buffer buf       = byte_buffer::create({0x00, 0x01}).value();
   rlc_sdu     write_sdu = {std::move(buf), 10};
   TESTASSERT(tx_queue.write(std::move(write_sdu)));
 
   // Check basic stats
-  TESTASSERT_EQ(1, tx_queue.size_sdus());
-  TESTASSERT_EQ(2, tx_queue.size_bytes());
+  rlc_sdu_queue_lockfree::state_t state = tx_queue.get_state();
+  TESTASSERT_EQ(1, state.n_sdus);
+  TESTASSERT_EQ(2, state.n_bytes);
 
   // Read one SDU
   rlc_sdu read_sdu;
   TESTASSERT(tx_queue.read(read_sdu));
 
   // Check basic stats
-  TESTASSERT_EQ(0, tx_queue.size_sdus());
-  TESTASSERT_EQ(0, tx_queue.size_bytes());
+  state = tx_queue.get_state();
+  TESTASSERT_EQ(0, state.n_sdus);
+  TESTASSERT_EQ(0, state.n_bytes);
 
   // Check SDU
-  byte_buffer expected_msg({0x00, 0x01});
+  byte_buffer expected_msg = byte_buffer::create({0x00, 0x01}).value();
   TESTASSERT(read_sdu.pdcp_sn.has_value());
   TESTASSERT_EQ(10, read_sdu.pdcp_sn.value());
   TESTASSERT(expected_msg == read_sdu.buf);
@@ -60,10 +70,11 @@ void queue_unqueue_test()
 
 void full_capacity_test()
 {
-  rlc_bearer_logger      logger("RLC", {0, du_ue_index_t::MIN_DU_UE_INDEX, rb_id_t(drb_id_t::drb1), "DL"});
-  test_delimit_logger    delimiter{"RLC SDU capacity test"};
+  rlc_bearer_logger   logger("RLC", {gnb_du_id_t::min, du_ue_index_t::MIN_DU_UE_INDEX, rb_id_t(drb_id_t::drb1), "DL"});
+  test_delimit_logger delimiter{"RLC SDU capacity test"};
+
   unsigned               capacity = 5;
-  rlc_sdu_queue_lockfree tx_queue(capacity, logger);
+  rlc_sdu_queue_lockfree tx_queue(capacity, default_rlc_queue_size_bytes, logger);
 
   // Write Capacity + 1 SDUs
   for (uint32_t pdcp_sn = 0; pdcp_sn < capacity + 1; pdcp_sn++) {
@@ -77,8 +88,9 @@ void full_capacity_test()
       TESTASSERT(tx_queue.write(std::move(write_sdu)) == false);
     }
   }
-  TESTASSERT_EQ(capacity, tx_queue.size_sdus());
-  TESTASSERT_EQ(2 * capacity, tx_queue.size_bytes());
+  rlc_sdu_queue_lockfree::state_t state = tx_queue.get_state();
+  TESTASSERT_EQ(capacity, state.n_sdus);
+  TESTASSERT_EQ(2 * capacity, state.n_bytes);
 
   // Read all SDUs and try to read on SDU over capacity
   for (uint32_t pdcp_sn = 0; pdcp_sn < capacity + 1; pdcp_sn++) {
@@ -94,17 +106,19 @@ void full_capacity_test()
     }
   }
 
-  TESTASSERT_EQ(0, tx_queue.size_sdus());
-  TESTASSERT_EQ(0, tx_queue.size_bytes());
+  state = tx_queue.get_state();
+  TESTASSERT_EQ(0, state.n_sdus);
+  TESTASSERT_EQ(0, state.n_bytes);
 }
 
 void discard_test()
 {
-  rlc_bearer_logger      logger("RLC", {0, du_ue_index_t::MIN_DU_UE_INDEX, rb_id_t(drb_id_t::drb1), "DL"});
-  test_delimit_logger    delimiter{"RLC SDU discard test"};
-  unsigned               capacity = 10;
-  unsigned               n_sdus   = capacity;
-  rlc_sdu_queue_lockfree tx_queue(capacity, logger);
+  rlc_bearer_logger   logger("RLC", {gnb_du_id_t::min, du_ue_index_t::MIN_DU_UE_INDEX, rb_id_t(drb_id_t::drb1), "DL"});
+  test_delimit_logger delimiter{"RLC SDU discard test"};
+  unsigned            capacity          = 10;
+  unsigned            n_sdus            = capacity;
+  const uint32_t      queue_bytes_limit = 6172672;
+  rlc_sdu_queue_lockfree tx_queue(capacity, queue_bytes_limit, logger);
 
   // Fill SDU queue with SDUs
   for (uint32_t pdcp_sn = 0; pdcp_sn < n_sdus; pdcp_sn++) {
@@ -114,8 +128,9 @@ void discard_test()
     rlc_sdu write_sdu = {std::move(buf), pdcp_sn};
     TESTASSERT(tx_queue.write(std::move(write_sdu)) == true);
   }
-  TESTASSERT_EQ(n_sdus, tx_queue.size_sdus());
-  TESTASSERT_EQ(2 * n_sdus, tx_queue.size_bytes());
+  rlc_sdu_queue_lockfree::state_t state = tx_queue.get_state();
+  TESTASSERT_EQ(n_sdus, state.n_sdus);
+  TESTASSERT_EQ(2 * n_sdus, state.n_bytes);
 
   // Discard pdcp_sn 2 and 4
   TESTASSERT(tx_queue.try_discard(2));
@@ -126,25 +141,27 @@ void discard_test()
 
   // Double check correct number of SDUs and SDU bytes
   unsigned leftover_sdus = n_sdus - 2;
-  TESTASSERT_EQ(leftover_sdus, tx_queue.size_sdus());
-  TESTASSERT_EQ(leftover_sdus * 2, tx_queue.size_bytes());
+  state                  = tx_queue.get_state();
+  TESTASSERT_EQ(leftover_sdus, state.n_sdus);
+  TESTASSERT_EQ(leftover_sdus * 2, state.n_bytes);
 
   // Read SDUs
   for (uint32_t n = 0; n < leftover_sdus; n++) {
     rlc_sdu read_sdu = {};
     TESTASSERT(tx_queue.read(read_sdu));
   }
-  TESTASSERT_EQ(0, tx_queue.size_sdus());
-  TESTASSERT_EQ(0, tx_queue.size_bytes());
+  state = tx_queue.get_state();
+  TESTASSERT_EQ(0, state.n_sdus);
+  TESTASSERT_EQ(0, state.n_bytes);
 }
 
 void discard_all_test()
 {
-  rlc_bearer_logger      logger("RLC", {0, du_ue_index_t::MIN_DU_UE_INDEX, rb_id_t(drb_id_t::drb1), "DL"});
-  test_delimit_logger    delimiter{"RLC SDU discard all test"};
-  unsigned               capacity = 10;
-  unsigned               n_sdus   = capacity / 2;
-  rlc_sdu_queue_lockfree tx_queue(capacity, logger);
+  rlc_bearer_logger   logger("RLC", {gnb_du_id_t::min, du_ue_index_t::MIN_DU_UE_INDEX, rb_id_t(drb_id_t::drb1), "DL"});
+  test_delimit_logger delimiter{"RLC SDU discard all test"};
+  unsigned            capacity = 10;
+  unsigned            n_sdus   = capacity / 2;
+  rlc_sdu_queue_lockfree tx_queue(capacity, default_rlc_queue_size_bytes, logger);
 
   // Fill SDU queue with SDUs
   for (uint32_t pdcp_sn = 0; pdcp_sn < n_sdus; pdcp_sn++) {
@@ -154,24 +171,27 @@ void discard_all_test()
     rlc_sdu write_sdu = {std::move(buf), pdcp_sn};
     TESTASSERT(tx_queue.write(std::move(write_sdu)) == true);
   }
-  TESTASSERT_EQ(n_sdus, tx_queue.size_sdus());
-  TESTASSERT_EQ(2 * n_sdus, tx_queue.size_bytes());
+  rlc_sdu_queue_lockfree::state_t state = tx_queue.get_state();
+  TESTASSERT_EQ(n_sdus, state.n_sdus);
+  TESTASSERT_EQ(2 * n_sdus, state.n_bytes);
 
   // Discard all SDUs
   for (uint32_t pdcp_sn = 0; pdcp_sn < n_sdus; pdcp_sn++) {
     TESTASSERT(tx_queue.try_discard(pdcp_sn));
   }
 
-  TESTASSERT_EQ(0, tx_queue.size_sdus());
-  TESTASSERT_EQ(0, tx_queue.size_bytes());
+  state = tx_queue.get_state();
+  TESTASSERT_EQ(0, state.n_sdus);
+  TESTASSERT_EQ(0, state.n_bytes);
 
   // Read SDU
   {
     rlc_sdu read_sdu = {};
     TESTASSERT(tx_queue.read(read_sdu) == false);
   }
-  TESTASSERT_EQ(0, tx_queue.size_sdus());
-  TESTASSERT_EQ(0, tx_queue.size_bytes());
+  state = tx_queue.get_state();
+  TESTASSERT_EQ(0, state.n_sdus);
+  TESTASSERT_EQ(0, state.n_bytes);
 }
 } // namespace srsran
 

@@ -24,8 +24,6 @@
 #include "lib/scheduler/support/mcs_tbs_calculator.h"
 #include "lib/scheduler/support/sch_pdu_builder.h"
 #include "tests/unittests/scheduler/test_utils/config_generators.h"
-#include "srsran/ran/pdsch/dlsch_info.h"
-#include "srsran/ran/pusch/ulsch_info.h"
 #include "srsran/ran/sch/tbs_calculator.h"
 #include "srsran/ran/uci/uci_mapping.h"
 #include "srsran/support/test_utils.h"
@@ -55,7 +53,8 @@ public:
     ue_cell_cfg(to_rnti(0x4601), cell_cfg, config_helpers::create_default_initial_ue_serving_cell_config()),
     time_resource{0},
     pdsch_cfg(get_pdsch_config_f1_0_c_rnti(
-        ue_cell_cfg,
+        cell_cfg,
+        &ue_cell_cfg,
         cell_cfg.dl_cfg_common.init_dl_bwp.pdsch_common.pdsch_td_alloc_list[time_resource]))
   {
   }
@@ -73,8 +72,8 @@ TEST_P(dl_mcs_tbs_calculator_test_bench, test_values)
   mcs_test_entry test_entry{.max_mcs = GetParam().max_mcs, .nof_prbs = GetParam().nof_prbs};
 
   // Run test function.
-  optional<sch_mcs_tbs> test =
-      compute_dl_mcs_tbs(pdsch_cfg, ue_cell_cfg, sch_mcs_index(test_entry.max_mcs), test_entry.nof_prbs);
+  std::optional<sch_mcs_tbs> test =
+      compute_dl_mcs_tbs(pdsch_cfg, sch_mcs_index(test_entry.max_mcs), test_entry.nof_prbs, false);
 
   ASSERT_TRUE(test.has_value());
   ASSERT_EQ(GetParam().final_mcs, test.value().mcs);
@@ -124,8 +123,8 @@ TEST_P(ul_mcs_tbs_prbs_calculator_test_bench, test_values)
   mcs_test_entry test_entry{.max_mcs = GetParam().max_mcs, .nof_prbs = GetParam().nof_prbs};
 
   // Run test function.
-  optional<sch_mcs_tbs> test =
-      compute_ul_mcs_tbs(pusch_cfg, ue_cell_cfg, sch_mcs_index(test_entry.max_mcs), test_entry.nof_prbs);
+  std::optional<sch_mcs_tbs> test =
+      compute_ul_mcs_tbs(pusch_cfg, &ue_cell_cfg, sch_mcs_index(test_entry.max_mcs), test_entry.nof_prbs, false);
 
   ASSERT_TRUE(test.has_value());
   ASSERT_EQ(GetParam().final_mcs, test.value().mcs);
@@ -177,8 +176,8 @@ TEST_P(ul_mcs_tbs_prbs_calculator_dci_0_1_test_bench, test_values_with_uci)
   mcs_test_entry test_entry{.max_mcs = GetParam().max_mcs, .nof_prbs = GetParam().nof_prbs};
 
   // Run test function.
-  optional<sch_mcs_tbs> test =
-      compute_ul_mcs_tbs(pusch_cfg, ue_cell_cfg, sch_mcs_index(test_entry.max_mcs), test_entry.nof_prbs);
+  std::optional<sch_mcs_tbs> test =
+      compute_ul_mcs_tbs(pusch_cfg, &ue_cell_cfg, sch_mcs_index(test_entry.max_mcs), test_entry.nof_prbs, false);
 
   ASSERT_TRUE(test.has_value());
   ASSERT_EQ(GetParam().final_mcs, test.value().mcs);
@@ -234,8 +233,8 @@ TEST_F(ul_mcs_tbs_prbs_calculator_low_mcs_test_bench, test_values_with_uci)
   mcs_test_entry test_1_prb{.final_mcs = 5, .tbs_bytes = 12, .max_mcs = 5, .nof_prbs = 1};
 
   // Run test function.
-  optional<sch_mcs_tbs> test =
-      compute_ul_mcs_tbs(pusch_cfg, ue_cell_cfg, sch_mcs_index(test_1_prb.max_mcs), test_1_prb.nof_prbs);
+  std::optional<sch_mcs_tbs> test =
+      compute_ul_mcs_tbs(pusch_cfg, &ue_cell_cfg, sch_mcs_index(test_1_prb.max_mcs), test_1_prb.nof_prbs, false);
 
   ASSERT_TRUE(test.has_value());
   ASSERT_EQ(test_1_prb.final_mcs, test.value().mcs);
@@ -245,7 +244,7 @@ TEST_F(ul_mcs_tbs_prbs_calculator_low_mcs_test_bench, test_values_with_uci)
   test_1_prb.max_mcs = 4;
 
   // Run test function.
-  test = compute_ul_mcs_tbs(pusch_cfg, ue_cell_cfg, sch_mcs_index(test_1_prb.max_mcs), test_1_prb.nof_prbs);
+  test = compute_ul_mcs_tbs(pusch_cfg, &ue_cell_cfg, sch_mcs_index(test_1_prb.max_mcs), test_1_prb.nof_prbs, false);
 
   ASSERT_FALSE(test.has_value());
 
@@ -253,7 +252,7 @@ TEST_F(ul_mcs_tbs_prbs_calculator_low_mcs_test_bench, test_values_with_uci)
   mcs_test_entry test_2_prb{.final_mcs = 4, .tbs_bytes = 19, .max_mcs = 4, .nof_prbs = 2};
 
   // Run test function.
-  test = compute_ul_mcs_tbs(pusch_cfg, ue_cell_cfg, sch_mcs_index(test_2_prb.max_mcs), test_2_prb.nof_prbs);
+  test = compute_ul_mcs_tbs(pusch_cfg, &ue_cell_cfg, sch_mcs_index(test_2_prb.max_mcs), test_2_prb.nof_prbs, false);
   ASSERT_TRUE(test.has_value());
   ASSERT_EQ(test_2_prb.final_mcs, test.value().mcs);
   ASSERT_EQ(test_2_prb.tbs_bytes, test.value().tbs);
@@ -262,7 +261,8 @@ TEST_F(ul_mcs_tbs_prbs_calculator_low_mcs_test_bench, test_values_with_uci)
   mcs_test_entry test_2_prb_mcs_0{.final_mcs = 0, .tbs_bytes = 7, .max_mcs = 0, .nof_prbs = 2};
 
   // Run test function.
-  test = compute_ul_mcs_tbs(pusch_cfg, ue_cell_cfg, sch_mcs_index(test_2_prb_mcs_0.max_mcs), test_2_prb_mcs_0.nof_prbs);
+  test = compute_ul_mcs_tbs(
+      pusch_cfg, &ue_cell_cfg, sch_mcs_index(test_2_prb_mcs_0.max_mcs), test_2_prb_mcs_0.nof_prbs, false);
   ASSERT_TRUE(test.has_value());
   ASSERT_EQ(test_2_prb_mcs_0.final_mcs, test.value().mcs);
   ASSERT_EQ(test_2_prb_mcs_0.tbs_bytes, test.value().tbs);
@@ -297,8 +297,8 @@ TEST_F(ul_mcs_tbs_prbs_calculator_with_harq_ack, test_values_with_2_harq_bits)
   mcs_test_entry test_1_prb{.final_mcs = 27, .tbs_bytes = 88, .max_mcs = 28, .nof_prbs = 1};
 
   // Run test function.
-  optional<sch_mcs_tbs> test =
-      compute_ul_mcs_tbs(pusch_cfg, ue_cell_cfg, sch_mcs_index(test_1_prb.max_mcs), test_1_prb.nof_prbs);
+  std::optional<sch_mcs_tbs> test =
+      compute_ul_mcs_tbs(pusch_cfg, &ue_cell_cfg, sch_mcs_index(test_1_prb.max_mcs), test_1_prb.nof_prbs, false);
 
   ASSERT_TRUE(test.has_value());
   ASSERT_EQ(test_1_prb.final_mcs, test.value().mcs);

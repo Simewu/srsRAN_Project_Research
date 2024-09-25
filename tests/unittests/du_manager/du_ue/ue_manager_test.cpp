@@ -47,14 +47,14 @@ protected:
     f1ap_dummy.next_ue_create_response.result = true;
     f1ap_dummy.next_ue_create_response.f1c_bearers_added.resize(2);
   }
-  ~du_ue_manager_tester() { srslog::flush(); }
+  ~du_ue_manager_tester() override { srslog::flush(); }
 
   ul_ccch_indication_message create_ul_ccch_message(rnti_t rnti)
   {
     ul_ccch_indication_message ccch_ind{};
     ccch_ind.cell_index = to_du_cell_index(0);
     ccch_ind.tc_rnti    = rnti;
-    ccch_ind.subpdu     = {0, 1, 2, 3, 4, 5};
+    ccch_ind.subpdu     = byte_buffer::create({0, 1, 2, 3, 4, 5}).value();
     return ccch_ind;
   }
 
@@ -108,7 +108,7 @@ protected:
   null_rlc_pcap                          rlc_pcap;
   dummy_ue_resource_configurator_factory cell_res_alloc;
 
-  du_manager_params params{{"srsgnb", 1, 1, {"127.0.0.1"}, cells},
+  du_manager_params params{{"srsgnb", (gnb_du_id_t)1, 1, cells},
                            {timers, worker, ue_execs, cell_execs},
                            {f1ap_dummy, f1ap_dummy},
                            {f1u_dummy},
@@ -288,7 +288,7 @@ TEST_F(du_ue_manager_tester, when_ue_is_being_removed_then_ue_notifiers_get_disc
   // TEST: UE notifiers are disconnected.
   mac_dummy.last_dl_bs.reset();
   srb1.on_buffer_state_update(10);
-  ASSERT_FALSE(mac_dummy.last_dl_bs.has_value());
+  ASSERT_TRUE(not mac_dummy.last_dl_bs.has_value() or mac_dummy.last_dl_bs.value().bs == 0);
 }
 
 class du_ue_manager_rlf_tester : public du_ue_manager_tester

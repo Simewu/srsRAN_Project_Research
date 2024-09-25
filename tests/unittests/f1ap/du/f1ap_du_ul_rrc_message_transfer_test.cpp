@@ -22,6 +22,7 @@
 
 #include "f1ap_du_test_helpers.h"
 #include "lib/f1ap/du/ue_context/f1c_du_bearer_impl.h"
+#include "tests/test_doubles/f1ap/f1ap_test_messages.h"
 #include "srsran/asn1/f1ap/common.h"
 #include "srsran/support/test_utils.h"
 #include <gtest/gtest.h>
@@ -35,12 +36,14 @@ TEST_F(f1ap_du_test, when_sdu_is_received_then_sdu_is_forwarded_to_tx_pdu_notifi
   // Run Test Preamble.
   run_f1_setup_procedure();
   ue_test_context* ue = run_f1ap_ue_create(to_du_ue_index(0));
-  run_ue_context_setup_procedure(ue->ue_index, generate_ue_context_setup_request({}));
+  f1ap_message     msg =
+      test_helpers::create_ue_context_setup_request(gnb_cu_ue_f1ap_id_t{0}, gnb_du_ue_f1ap_id_t{0}, 1, {});
+  run_ue_context_setup_procedure(ue->ue_index, msg);
   this->f1c_gw.last_tx_f1ap_pdu.pdu = {};
 
   std::vector<uint8_t> bytes = test_rgen::random_vector<uint8_t>(test_rgen::uniform_int<unsigned>(1, 4000));
-  byte_buffer          sdu{bytes};
-  ue->f1c_bearers[1].bearer->handle_sdu(byte_buffer_chain{sdu.copy()});
+  byte_buffer          sdu   = byte_buffer::create(bytes).value();
+  ue->f1c_bearers[1].bearer->handle_sdu(byte_buffer_chain::create(sdu.copy()).value());
 
   ASSERT_EQ(this->f1c_gw.last_tx_f1ap_pdu.pdu.type().value, asn1::f1ap::f1ap_pdu_c::types_opts::init_msg);
   ASSERT_EQ(this->f1c_gw.last_tx_f1ap_pdu.pdu.init_msg().proc_code, ASN1_F1AP_ID_UL_RRC_MSG_TRANSFER);

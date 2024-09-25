@@ -22,8 +22,8 @@
 
 #pragma once
 
-#include "../ran_resource_management/cell_group_config.h"
 #include "../ran_resource_management/du_ran_resource_manager.h"
+#include "../ran_resource_management/du_ue_resource_config.h"
 #include "du_ue_bearer_manager.h"
 #include "srsran/ran/du_types.h"
 #include "srsran/ran/rnti.h"
@@ -33,8 +33,12 @@ namespace srs_du {
 
 /// \brief This class holds the context of an UE in the DU.
 struct du_ue_context {
-  du_ue_context(du_ue_index_t ue_index_, du_cell_index_t pcell_index_, rnti_t rnti_) :
-    ue_index(ue_index_), rnti(rnti_), f1ap_ue_id(int_to_gnb_du_ue_f1ap_id(ue_index_)), pcell_index(pcell_index_)
+  du_ue_context(du_ue_index_t ue_index_, du_cell_index_t pcell_index_, rnti_t rnti_, nr_cell_global_id_t nr_cgi_) :
+    ue_index(ue_index_),
+    rnti(rnti_),
+    f1ap_ue_id(int_to_gnb_du_ue_f1ap_id(ue_index_)),
+    pcell_index(pcell_index_),
+    nr_cgi(nr_cgi_)
   {
   }
 
@@ -42,6 +46,8 @@ struct du_ue_context {
   rnti_t              rnti = rnti_t::INVALID_RNTI;
   gnb_du_ue_f1ap_id_t f1ap_ue_id;
   du_cell_index_t     pcell_index;
+  /// \brief The NR Cell Global Identity of the UE's serving cell.
+  nr_cell_global_id_t nr_cgi;
 };
 
 /// The interface exposes the methods to interact with the state of a DU UE.
@@ -50,11 +56,22 @@ class du_ue_controller
 public:
   virtual ~du_ue_controller() = default;
 
-  /// \brief Disconnect the UE inter-layer notifiers.
+  /// \brief Stop all SRB and DRB traffic for a give UE.
   ///
   /// This method should be called as a first step in the deletion of a UE, to ensure traffic is not flowing through
   /// its bearers during the layer by layer UE context removal.
-  virtual async_task<void> disconnect_notifiers() = 0;
+  virtual async_task<void> handle_traffic_stop_request() = 0;
+
+  /// \brief Stop DRB activity and the detection of RLF for this UE.
+  ///
+  /// This method can be called when the DU receives a request to delete a UE context, but the UE is not yet in a
+  /// state where it is ready to be deleted (e.g. pending SRB PDUs).
+  virtual async_task<void> handle_activity_stop_request() = 0;
+
+  /// \brief Stop activity/traffic for a subset of DRBs of a UE.
+  ///
+  /// This method can be called during a UE reconfiguration, when some DRBs are removed.
+  virtual async_task<void> handle_drb_traffic_stop_request(span<const drb_id_t> drbs_to_stop) = 0;
 
   /// \brief Schedule task for a given UE.
   virtual void schedule_async_task(async_task<void> task) = 0;
@@ -91,9 +108,9 @@ public:
   /// \brief Radio access network resources currently allocated to the UE.
   ue_ran_resource_configurator resources;
 
-  /// \brief Determines whether this UE is running the RRC Reestablishment procedure.
-  // TODO: refactor.
-  bool reestablishment_pending = false;
+  /// \brief Determines whether this UE is running the RRC Reestablishment procedure and which context was retrieved
+  /// from the old UE.
+  std::unique_ptr<du_ue_resource_config> reestablished_cfg_pending;
 };
 
 } // namespace srs_du

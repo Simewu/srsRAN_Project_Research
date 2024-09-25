@@ -24,7 +24,7 @@
 #include "lib/scheduler/pdcch_scheduling/pdcch_resource_allocator_impl.h"
 #include "lib/scheduler/scheduler_impl.h"
 #include "lib/scheduler/ue_scheduling/ue_cell_grid_allocator.h"
-#include "lib/scheduler/ue_scheduling/ue_srb0_scheduler.h"
+#include "lib/scheduler/ue_scheduling/ue_fallback_scheduler.h"
 #include "tests/unittests/scheduler/test_utils/config_generators.h"
 #include "tests/unittests/scheduler/test_utils/scheduler_test_suite.h"
 #include "srsran/ran/duplex_mode.h"
@@ -72,13 +72,13 @@ class base_paging_sched_tester
 public:
   using five_g_s_tmsi = uint64_t;
 
-  slot_point                        current_slot{0, 0};
-  srslog::basic_logger&             mac_logger  = srslog::fetch_basic_logger("SCHED", true);
-  srslog::basic_logger&             test_logger = srslog::fetch_basic_logger("TEST", true);
-  optional<paging_sched_test_bench> bench;
+  slot_point                             current_slot{0, 0};
+  srslog::basic_logger&                  mac_logger  = srslog::fetch_basic_logger("SCHED", true);
+  srslog::basic_logger&                  test_logger = srslog::fetch_basic_logger("TEST", true);
+  std::optional<paging_sched_test_bench> bench;
   // We use this value to account for the case when the PDSCH or PUSCH is allocated several slots in advance.
   unsigned                max_k_value = 0;
-  scheduler_result_logger sched_res_logger;
+  scheduler_result_logger sched_res_logger{false, 0};
 
   base_paging_sched_tester() = default;
 
@@ -125,7 +125,6 @@ public:
 
     mac_logger.set_context(current_slot.sfn(), current_slot.slot_index());
     test_logger.set_context(current_slot.sfn(), current_slot.slot_index());
-    sched_res_logger.on_slot_start();
 
     bench->res_grid.slot_indication(current_slot);
     bench->pdcch_sch.slot_indication(current_slot);
@@ -147,16 +146,16 @@ public:
   }
 
   sched_cell_configuration_request_message
-  create_custom_cell_config_request(duplex_mode              duplx_mode,
-                                    subcarrier_spacing       scs        = srsran::subcarrier_spacing::kHz30,
-                                    bs_channel_bandwidth_fr1 carrier_bw = srsran::bs_channel_bandwidth_fr1::MHz20) const
+  create_custom_cell_config_request(duplex_mode          duplx_mode,
+                                    subcarrier_spacing   scs        = srsran::subcarrier_spacing::kHz30,
+                                    bs_channel_bandwidth carrier_bw = srsran::bs_channel_bandwidth::MHz20) const
   {
     cell_config_builder_params cell_cfg{};
     if (duplx_mode == duplex_mode::TDD) {
       // Band 40.
-      cell_cfg.dl_arfcn       = 465000;
+      cell_cfg.dl_f_ref_arfcn = 465000;
       cell_cfg.scs_common     = scs;
-      cell_cfg.band           = band_helper::get_band_from_dl_arfcn(cell_cfg.dl_arfcn);
+      cell_cfg.band           = band_helper::get_band_from_dl_arfcn(cell_cfg.dl_f_ref_arfcn);
       cell_cfg.channel_bw_mhz = carrier_bw;
     }
     return test_helpers::make_default_sched_cell_configuration_request(cell_cfg);
@@ -325,7 +324,7 @@ TEST_F(paging_sched_special_case_tester, successfully_allocated_paging_grant_5mh
   const uint16_t drx_cycle_in_nof_rf = 128;
 
   auto sched_cell_cfg = create_custom_cell_config_request(
-      srsran::duplex_mode::FDD, subcarrier_spacing::kHz15, bs_channel_bandwidth_fr1::MHz5);
+      srsran::duplex_mode::FDD, subcarrier_spacing::kHz15, bs_channel_bandwidth::MHz5);
 
   // Shuffle between SearchSpace#0 and SearchSpace#1.
   const auto ss_id = to_search_space_id(get_random_uint(0, 1));
@@ -377,7 +376,7 @@ TEST_F(paging_sched_partial_slot_tester, successfully_allocated_paging_grant_ss_
   cell_cfg_request.dl_cfg_common.init_dl_bwp.pdsch_common.pdsch_td_alloc_list =
       config_helpers::make_pdsch_time_domain_resource(cell_cfg_request.searchspace0,
                                                       cell_cfg_request.dl_cfg_common.init_dl_bwp.pdcch_common,
-                                                      nullopt,
+                                                      std::nullopt,
                                                       cell_cfg_request.tdd_ul_dl_cfg_common);
 
   // Set Paging configuration to a particular value in order to derive the 5G-S-TMSI, such that Paging Occasion

@@ -27,17 +27,18 @@ using namespace srs_du;
 
 template <typename Bearer>
 static void fill_rlc_entity_creation_message_common(rlc_entity_creation_message&             msg,
-                                                    uint32_t                                 du_index,
+                                                    gnb_du_id_t                              du_id,
                                                     du_ue_index_t                            ue_index,
                                                     du_cell_index_t                          pcell_index,
                                                     Bearer&                                  bearer,
+                                                    const rlc_config&                        rlc_cfg,
                                                     const du_manager_params::service_params& du_services,
                                                     rlc_tx_upper_layer_control_notifier&     rlc_rlf_notifier,
                                                     rlc_pcap&                                pcap_writer)
 {
-  msg.du_index       = du_index;
+  msg.gnb_du_id      = du_id;
   msg.ue_index       = ue_index;
-  msg.config         = bearer.rlc_cfg;
+  msg.config         = rlc_cfg;
   msg.rx_upper_dn    = &bearer.connector.rlc_rx_sdu_notif;
   msg.tx_upper_dn    = &bearer.connector.rlc_tx_data_notif;
   msg.tx_upper_cn    = &rlc_rlf_notifier;
@@ -50,27 +51,29 @@ static void fill_rlc_entity_creation_message_common(rlc_entity_creation_message&
 
 // for SRBs
 rlc_entity_creation_message
-srsran::srs_du::make_rlc_entity_creation_message(uint32_t                                 du_index,
+srsran::srs_du::make_rlc_entity_creation_message(gnb_du_id_t                              gnb_du_id,
                                                  du_ue_index_t                            ue_index,
                                                  du_cell_index_t                          pcell_index,
                                                  du_ue_srb&                               bearer,
+                                                 const rlc_config&                        rlc_cfg,
                                                  const du_manager_params::service_params& du_services,
                                                  rlc_tx_upper_layer_control_notifier&     rlc_rlf_notifier,
                                                  rlc_pcap&                                pcap_writer)
 {
   rlc_entity_creation_message msg;
   fill_rlc_entity_creation_message_common(
-      msg, du_index, ue_index, pcell_index, bearer, du_services, rlc_rlf_notifier, pcap_writer);
+      msg, gnb_du_id, ue_index, pcell_index, bearer, rlc_cfg, du_services, rlc_rlf_notifier, pcap_writer);
   msg.rb_id = bearer.srb_id;
   return msg;
 }
 
 // for DRBs
 rlc_entity_creation_message
-srsran::srs_du::make_rlc_entity_creation_message(uint32_t                                 du_index,
+srsran::srs_du::make_rlc_entity_creation_message(gnb_du_id_t                              gnb_du_id,
                                                  du_ue_index_t                            ue_index,
                                                  du_cell_index_t                          pcell_index,
                                                  du_ue_drb&                               bearer,
+                                                 const rlc_config&                        rlc_cfg,
                                                  const du_manager_params::service_params& du_services,
                                                  rlc_tx_upper_layer_control_notifier&     rlc_rlf_notifier,
                                                  rlc_metrics_notifier*                    rlc_metrics_notifier_,
@@ -78,8 +81,11 @@ srsran::srs_du::make_rlc_entity_creation_message(uint32_t                       
 {
   rlc_entity_creation_message msg;
   fill_rlc_entity_creation_message_common(
-      msg, du_index, ue_index, pcell_index, bearer, du_services, rlc_rlf_notifier, pcap_writer);
+      msg, gnb_du_id, ue_index, pcell_index, bearer, rlc_cfg, du_services, rlc_rlf_notifier, pcap_writer);
   msg.rb_id             = bearer.drb_id;
   msg.rlc_metrics_notif = rlc_metrics_notifier_;
+  if (msg.rlc_metrics_notif == nullptr) {
+    msg.config.metrics_period = timer_duration{0};
+  }
   return msg;
 }

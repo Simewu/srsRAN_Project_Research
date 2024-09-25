@@ -25,6 +25,10 @@ if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
     list(APPEND CRC_CALCULATOR_SOURCES crc_calculator_clmul_impl.cpp)
     set_source_files_properties(crc_calculator_clmul_impl.cpp PROPERTIES COMPILE_OPTIONS "-mpclmul;-msse4.1")
 endif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
+if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+    list(APPEND CRC_CALCULATOR_SOURCES crc_calculator_neon_impl.cpp)
+    set_source_files_properties(crc_calculator_neon_impl.cpp PROPERTIES COMPILE_OPTIONS "-march=${MARCH}+crypto")
+endif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
 
 
 add_library(srsran_crc_calculator STATIC ${CRC_CALCULATOR_SOURCES})
@@ -41,9 +45,8 @@ target_link_libraries(srsran_channel_coding
         srsran_ldpc
         srsran_short_block)
 
-install(TARGETS srsran_channel_coding
+add_to_exported_libs(srsran_channel_coding
         srsran_crc_calculator
         srsran_polar
         srsran_ldpc
-        srsran_short_block
-        EXPORT srsran_export)
+        srsran_short_block)

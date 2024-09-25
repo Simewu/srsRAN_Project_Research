@@ -22,8 +22,12 @@
 
 #pragma once
 
-#include "../du_processor/du_processor_impl_interface.h"
-#include "srsran/cu_cp/ue_manager.h"
+#include "../cu_cp_impl_interface.h"
+#include "../du_processor/du_processor.h"
+#include "../up_resource_manager/up_resource_manager_impl.h"
+#include "srsran/cu_cp/ue_configuration.h"
+#include "srsran/cu_cp/ue_task_scheduler.h"
+#include "srsran/e1ap/cu_cp/e1ap_cu_cp.h"
 #include "srsran/support/async/async_task.h"
 
 namespace srsran {
@@ -53,10 +57,12 @@ public:
                                      const ue_configuration&                         ue_cfg_,
                                      const srsran::security::sec_as_config&          security_cfg_,
                                      const security_indication_t&                    default_security_indication_,
-                                     du_processor_e1ap_control_notifier&             e1ap_ctrl_notif_,
-                                     du_processor_f1ap_ue_context_notifier&          f1ap_ue_ctxt_notif_,
-                                     du_processor_rrc_ue_control_message_notifier&   rrc_ue_notifier_,
-                                     up_resource_manager&                            rrc_ue_up_resource_manager_,
+                                     e1ap_bearer_context_manager&                    e1ap_bearer_ctxt_mng_,
+                                     f1ap_ue_context_manager&                        f1ap_ue_ctxt_mng_,
+                                     du_processor_rrc_ue_notifier&                   rrc_ue_notifier_,
+                                     cu_cp_rrc_ue_interface&                         cu_cp_notifier_,
+                                     ue_task_scheduler&                              ue_task_sched_,
+                                     up_resource_manager&                            up_resource_mng_,
                                      srslog::basic_logger&                           logger_);
 
   void operator()(coro_context<async_task<cu_cp_pdu_session_resource_setup_response>>& ctx);
@@ -64,7 +70,7 @@ public:
   static const char* name() { return "PDU Session Resource Setup Routine"; }
 
 private:
-  void fill_e1ap_bearer_context_setup_request(e1ap_bearer_context_setup_request& e1ap_request);
+  bool fill_e1ap_bearer_context_setup_request(e1ap_bearer_context_setup_request& e1ap_request);
   void fill_initial_e1ap_bearer_context_modification_request(e1ap_bearer_context_modification_request& e1ap_request);
 
   cu_cp_pdu_session_resource_setup_response handle_pdu_session_resource_setup_result(bool success);
@@ -76,14 +82,15 @@ private:
 
   up_config_update next_config;
 
-  du_processor_e1ap_control_notifier&           e1ap_ctrl_notifier;         // to trigger bearer context setup at CU-UP
-  du_processor_f1ap_ue_context_notifier&        f1ap_ue_ctxt_notifier;      // to trigger UE context modification at DU
-  du_processor_rrc_ue_control_message_notifier& rrc_ue_notifier;            // to trigger RRC Reconfiguration at UE
-  up_resource_manager&                          rrc_ue_up_resource_manager; // to get RRC DRB config
-  srslog::basic_logger&                         logger;
+  e1ap_bearer_context_manager&  e1ap_bearer_ctxt_mng; // to trigger bearer context setup at CU-UP
+  f1ap_ue_context_manager&      f1ap_ue_ctxt_mng;     // to trigger UE context modification at DU
+  du_processor_rrc_ue_notifier& rrc_ue_notifier;      // to trigger RRC Reconfiguration at UE
+  cu_cp_rrc_ue_interface&       cu_cp_notifier;       // to trigger UE release at CU-CP
+  ue_task_scheduler&            ue_task_sched;        // to schedule UE release request
+  up_resource_manager&          up_resource_mng;      // to get RRC DRB config
+  srslog::basic_logger&         logger;
 
   // (sub-)routine requests
-  rrc_ue_capability_transfer_request       ue_capability_transfer_request;
   e1ap_bearer_context_setup_request        bearer_context_setup_request;
   f1ap_ue_context_modification_request     ue_context_mod_request;
   e1ap_bearer_context_modification_request bearer_context_modification_request;
@@ -91,7 +98,6 @@ private:
 
   // (sub-)routine results
   cu_cp_pdu_session_resource_setup_response response_msg;
-  bool                                      ue_capability_transfer_result = false; // to query the UE capabilities
   e1ap_bearer_context_setup_response        bearer_context_setup_response; // to initially setup the DRBs at the CU-UP
   f1ap_ue_context_modification_response     ue_context_modification_response; // to inform DU about the new DRBs
   e1ap_bearer_context_modification_response

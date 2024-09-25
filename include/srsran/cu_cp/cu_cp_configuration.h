@@ -22,18 +22,33 @@
 
 #pragma once
 
-#include "ue_manager.h"
 #include "srsran/cu_cp/cell_meas_manager_config.h"
 #include "srsran/cu_cp/mobility_manager_config.h"
-#include "srsran/e1ap/common/e1ap_common.h"
-#include "srsran/ngap/ngap.h"
-#include "srsran/ngap/ngap_configuration.h"
-#include "srsran/rrc/rrc_config.h"
+#include "srsran/cu_cp/ue_configuration.h"
+#include "srsran/f1ap/cu_cp/f1ap_configuration.h"
+#include "srsran/rrc/rrc_ue_config.h"
 #include "srsran/support/executors/task_executor.h"
-#include <map>
 
 namespace srsran {
 namespace srs_cu_cp {
+
+class n2_connection_client;
+
+struct supported_tracking_area {
+  unsigned      tac;
+  plmn_identity plmn;
+  /// Supported Slices by the RAN node.
+  std::vector<s_nssai_t> supported_slices;
+};
+
+/// Parameters of the CU-CP that will reported to the 5G core.
+struct ran_node_configuration {
+  /// The gNodeB identifier.
+  gnb_id_t    gnb_id{411, 22};
+  std::string ran_node_name = "srsgnb01";
+  // Supported TAs in the NG RAN node.
+  std::vector<supported_tracking_area> supported_tas;
+};
 
 struct mobility_configuration {
   cell_meas_manager_cfg meas_manager_config;
@@ -42,21 +57,67 @@ struct mobility_configuration {
 
 /// Configuration passed to CU-CP.
 struct cu_cp_configuration {
-  task_executor*         cu_cp_executor = nullptr;
-  task_executor*         cu_cp_e2_exec  = nullptr;
-  ngap_message_notifier* ngap_notifier  = nullptr; ///> Callback for outgoing NGAP messages.
-  timer_manager*         timers         = nullptr;
-  /// Maximum number of DU connections that the CU-CP may accept.
-  unsigned max_nof_dus = 6;
-  /// Maximum number of CU-UP connections that the CU-CP may accept.
-  unsigned max_nof_cu_ups = 6;
-  /// Maximum number of UEs that the CU-CP may accept.
-  ngap_configuration     ngap_config;
-  rrc_cfg_t              rrc_config;
-  ue_configuration       ue_config;
-  mobility_configuration mobility_config;
-  security_indication_t  default_security_indication; // default if not signaled via NGAP
-  std::chrono::seconds   statistics_report_period;    // CU-CP statistics report period in seconds
+  struct admission_params {
+    /// Maximum number of DU connections that the CU-CP may accept.
+    unsigned max_nof_dus = 6;
+    /// Maximum number of CU-UP connections that the CU-CP may accept.
+    unsigned max_nof_cu_ups = 6;
+    /// Maximum number of UEs that the CU-CP may accept.
+    unsigned max_nof_ues = 8192;
+  };
+  struct service_params {
+    task_executor*        cu_cp_executor = nullptr;
+    task_executor*        cu_cp_e2_exec  = nullptr;
+    n2_connection_client* n2_gw          = nullptr;
+    timer_manager*        timers         = nullptr;
+  };
+  struct rrc_params {
+    /// Force re-establishment fallback.
+    bool force_reestablishment_fallback = false;
+    /// Timeout for RRC procedures.
+    std::chrono::milliseconds rrc_procedure_timeout_ms{360};
+    /// Version of the RRC.
+    unsigned rrc_version = 2;
+  };
+  struct security_params {
+    /// Integrity protection algorithms preference list
+    security::preferred_integrity_algorithms int_algo_pref_list{security::integrity_algorithm::nia0};
+    /// Encryption algorithms preference list
+    security::preferred_ciphering_algorithms enc_algo_pref_list{security::ciphering_algorithm::nea0};
+    /// Default security if not signaled via NGAP.
+    security_indication_t default_security_indication;
+  };
+  struct bearer_params {
+    /// PDCP config to use when UE SRB2 are configured.
+    srb_pdcp_config srb2_cfg;
+    /// Configuration for available 5QI.
+    std::map<five_qi_t, cu_cp_qos_config> drb_config;
+  };
+  struct metrics_params {
+    /// CU-CP statistics report period.
+    std::chrono::seconds statistics_report_period{1};
+  };
+
+  /// NG-RAN node parameters.
+  ran_node_configuration node;
+  /// Parameters to determine the admission of new CU-UP, DU and UE connections.
+  admission_params admission;
+  /// RRC layer-specific parameters.
+  rrc_params rrc;
+  /// F1AP layer-specific parameters.
+  f1ap_configuration f1ap;
+  /// UE Security-specific parameters.
+  security_params security;
+  /// SRB and DRB configuration of created UEs.
+  bearer_params bearers;
+  /// UE-specific parameters.
+  ue_configuration ue;
+  /// Parameters related with the mobility of UEs.
+  mobility_configuration mobility;
+  /// Parameters related with CU-CP metrics.
+  metrics_params metrics;
+  /// Timers, executors, and other services used by the CU-CP.
+  service_params services;
 };
 
 } // namespace srs_cu_cp

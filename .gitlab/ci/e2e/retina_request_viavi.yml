@@ -12,17 +12,18 @@
   requirements:
     arch: amd64
     cpu:
-      requests: 18
+      requests: 20
+      limits: 20
     memory:
       requests: "64G"
       limits: "64G"
     hugepages-1Gi:
-      requests: 2Gi
-      limits: 2Gi
+      requests: 4Gi
+      limits: 4Gi
     ephemeral-storage:
-      requests: "20G"
-      limits: "20G"
-  taints: ["ci-amd64-avx512-onprem"]
+      requests: "50G"
+      limits: "50G"
+  taints: ["purpose=ci-amd64-avx512-onprem"]
   resources:
     - type: emulator
       model: viavi
@@ -32,8 +33,8 @@
     - PATH: ${PATH}:/builds/softwareradiosystems/srsgnb/build/apps/gnb
     - LD_LIBRARY_PATH: /opt/dpdk/${DPDK_VERSION}/lib/x86_64-linux-gnu/
   shared_files:
-    - local_path: ../../build/apps/gnb/gnb
-      remote_path: /usr/local/bin
+    - local_path: ${GNB_BINARY_PATH}
+      remote_path: /usr/local/bin/gnb
       is_executable: true
 
 - name: metrics-server
@@ -46,7 +47,7 @@
       requests: "500Mi"
     ephemeral-storage:
       requests: "1G"
-  taints: ["retina"]
+  labels: ["kubernetes.io/hostname=k8s-worker-uhd1"]
   environment:
     - URL: ${RETINA_METRICS_SERVER_URL}
     - ORG: ${RETINA_METRICS_SERVER_ORG}

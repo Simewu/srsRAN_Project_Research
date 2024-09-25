@@ -62,11 +62,11 @@ public:
   handle_bearer_context_inactivity_notification(const e1ap_bearer_context_inactivity_notification& msg) = 0;
 };
 
-/// Methods used by E1AP to notify the CU-UP.
-class e1ap_cu_up_notifier
+/// Methods used by E1AP to notify the CU-UP manager.
+class e1ap_cu_up_manager_notifier
 {
 public:
-  virtual ~e1ap_cu_up_notifier() = default;
+  virtual ~e1ap_cu_up_manager_notifier() = default;
 
   /// \brief Notifies the UE manager to create a UE context.
   /// \param[in] msg The received bearer context setup message.
@@ -77,12 +77,16 @@ public:
   /// \brief Notifies the UE manager to create a UE context.
   /// \param[in] msg The received bearer context modification message.
   /// \return Returns a bearer context response message containing the index of the created UE context.
-  virtual e1ap_bearer_context_modification_response
+  virtual async_task<e1ap_bearer_context_modification_response>
   on_bearer_context_modification_request_received(const e1ap_bearer_context_modification_request& msg) = 0;
 
   /// \brief Notifies the UE manager to release a UE context.
   /// \param[in] msg The received bearer context release command.
-  virtual void on_bearer_context_release_command_received(const e1ap_bearer_context_release_command& msg) = 0;
+  virtual async_task<void>
+  on_bearer_context_release_command_received(const e1ap_bearer_context_release_command& msg) = 0;
+
+  /// \brief Schedules async task on UE.
+  virtual void on_schedule_ue_async_task(srs_cu_up::ue_index_t ue_index, async_task<void> task) = 0;
 };
 
 /// \brief Interface to query statistics from the E1AP interface.

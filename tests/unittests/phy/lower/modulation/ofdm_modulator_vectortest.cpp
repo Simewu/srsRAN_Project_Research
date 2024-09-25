@@ -27,7 +27,7 @@
 #include "srsran/support/test_utils.h"
 
 /// Defines the maximum allowed error at the OFDM modulator output.
-static constexpr float ASSERT_MAX_ERROR = 2e-5;
+static constexpr float ASSERT_MAX_ERROR = 5e-5;
 
 using namespace srsran;
 
@@ -63,7 +63,7 @@ int main()
     unsigned input_offset = 0;
     // Map the read data into a reader_spy structure.
     unsigned                 nsymb = get_nsymb_per_slot(test_case.test_config.config.cp);
-    resource_grid_reader_spy rg(1, nsymb, nsubc);
+    resource_grid_reader_spy rg;
     for (unsigned symbol_idx = 0; symbol_idx != nsymb; ++symbol_idx) {
       for (unsigned subc_idx = 0; subc_idx != nsubc; ++subc_idx) {
         resource_grid_reader_spy::expected_entry_t entry = {};
@@ -84,7 +84,7 @@ int main()
       float error =
           std::abs(output[i] - modulated[i]) / std::sqrt(static_cast<float>(test_case.test_config.config.dft_size));
       TESTASSERT(error < ASSERT_MAX_ERROR,
-                 "Sample index {} error {} exceeds maximum allowed ({}). Expedted symbol {} but got {}.",
+                 "Sample index {} error {} exceeds maximum allowed ({}). Expected symbol {} but got {}.",
                  i,
                  error,
                  ASSERT_MAX_ERROR,

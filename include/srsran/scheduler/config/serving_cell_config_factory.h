@@ -36,9 +36,11 @@ namespace config_helpers {
 struct cell_config_builder_params_extended : public cell_config_builder_params {
   cell_config_builder_params_extended(const cell_config_builder_params& source = {});
 
-  optional<unsigned> ssb_arfcn; /// Absolute frequency of the SSB.
-  unsigned           cell_nof_crbs;
-  subcarrier_spacing ssb_scs;
+  /// \brief Absolute frequency of the SSB as ARFCN. This is the ARFCN of the \c SS_ref (or SSB central frequency).
+  /// \c SS_ref is defined is per TS 38.104, Section 5.4.3.1 and 5.4.3.2.
+  std::optional<unsigned> ssb_arfcn;
+  unsigned                cell_nof_crbs;
+  subcarrier_spacing      ssb_scs;
 };
 
 static_vector<uint8_t, 8> generate_k1_candidates(const tdd_ul_dl_config_common& tdd_cfg, uint8_t min_k1 = 4);
@@ -82,6 +84,8 @@ pdsch_config make_default_pdsch_config(const cell_config_builder_params_extended
 
 pdcch_config make_ue_dedicated_pdcch_config(const cell_config_builder_params_extended& params = {});
 
+csi_meas_config make_csi_meas_config(const cell_config_builder_params_extended& params = {});
+
 /// \brief Creates a default UE Serving Cell configuration.
 serving_cell_config
 create_default_initial_ue_serving_cell_config(const cell_config_builder_params_extended& params = {});
@@ -107,10 +111,10 @@ uint8_t compute_max_nof_candidates(aggregation_level aggr_lvl, const coreset_con
 /// \param[in] tdd_cfg TDD configuration.
 /// \return List of PDSCH Time Domain Resource allocation.
 std::vector<pdsch_time_domain_resource_allocation>
-make_pdsch_time_domain_resource(uint8_t                           ss0_idx,
-                                const pdcch_config_common&        common_pdcch_cfg,
-                                optional<pdcch_config>            ded_pdcch_cfg = {},
-                                optional<tdd_ul_dl_config_common> tdd_cfg       = {});
+make_pdsch_time_domain_resource(uint8_t                                ss0_idx,
+                                const pdcch_config_common&             common_pdcch_cfg,
+                                std::optional<pdcch_config>            ded_pdcch_cfg = {},
+                                std::optional<tdd_ul_dl_config_common> tdd_cfg       = {});
 
 /// \brief Creates a default UE timers and constants configuration.
 ue_timers_and_constants_config make_default_ue_timers_and_constants_config();

@@ -32,6 +32,7 @@
 #include "srsran/ran/tdd/tdd_ul_dl_config.h"
 #include "srsran/scheduler/config/bwp_configuration.h"
 #include "srsran/scheduler/config/serving_cell_config.h"
+#include "srsran/scheduler/config/slice_rrm_policy_config.h"
 
 namespace srsran {
 
@@ -46,6 +47,13 @@ inline unsigned format1_cp_step_to_uint(nof_cyclic_shifts opt)
 {
   return static_cast<unsigned>(opt);
 }
+
+/// Collects the parameters for PUCCH Format 0 that can be configured.
+struct pucch_f0_params {
+  /// Indicates whether OCCs (as per \c PUCCH-format0, in \c PUCCH-Config, TS 38.331) are supported.
+  bounded_integer<unsigned, 1, 2> nof_symbols{2};
+  bool                            intraslot_freq_hopping{false};
+};
 
 /// Collects the parameters for PUCCH Format 1 that can be configured.
 struct pucch_f1_params {
@@ -64,8 +72,8 @@ struct pucch_f2_params {
   unsigned                        max_nof_rbs{1};
   /// Maximum payload in bits that can be carried by PUCCH Format 2. When this field is set, \c max_nof_rbs is ignored
   /// and the maximum number of RBs is computed according to \ref get_pucch_format2_max_nof_prbs.
-  optional<unsigned>  max_payload_bits;
-  max_pucch_code_rate max_code_rate{max_pucch_code_rate::dot_25};
+  std::optional<unsigned> max_payload_bits;
+  max_pucch_code_rate     max_code_rate{max_pucch_code_rate::dot_25};
   /// For intraslot-freq-hopping, \c nof_symbols must be set to 2.
   bool intraslot_freq_hopping{false};
 };
@@ -76,8 +84,9 @@ struct pucch_f2_params {
 struct pucch_builder_params {
   /// UE specific parameters. Use to set the number of resources per UE for HARQ-ACK reporting (not including SR/CSI
   /// dedicated resources). NOTE: by default, each UE is assigned 1 SR and 1 CSI resource.
-  bounded_integer<unsigned, 1, 8> nof_ue_pucch_f1_res_harq = 3;
-  bounded_integer<unsigned, 1, 8> nof_ue_pucch_f2_res_harq = 6;
+  /// \remark Format 0 and Format 1 resources are mutually exclusive.
+  bounded_integer<unsigned, 1, 8> nof_ue_pucch_f0_or_f1_res_harq = 6;
+  bounded_integer<unsigned, 1, 8> nof_ue_pucch_f2_res_harq       = 6;
   /// \brief Number of separate PUCCH resource sets for HARQ-ACK reporting that are available in a cell.
   /// \remark UEs will be distributed possibly over different HARQ-ACK PUCCH sets; the more sets, the fewer UEs will
   /// have to share the same set, which reduces the chances that UEs won't be allocated PUCCH due to lack of resources.
@@ -91,25 +100,42 @@ struct pucch_builder_params {
   unsigned nof_csi_resources = 1;
 
   /// PUCCH Format specific parameters.
-  pucch_f1_params f1_params;
-  pucch_f2_params f2_params;
+  // NOTE: Having \c pucch_f1_params force the varint to use the Format 1 in the default constructor.
+  std::variant<pucch_f1_params, pucch_f0_params> f0_or_f1_params;
+  pucch_f2_params                                f2_params;
+  /// Maximum number of symbols per UL slot dedicated for PUCCH.
+  /// \remark In case of Sounding Reference Signals (SRS) being used, the number of symbols should be reduced so that
+  /// the PUCCH resources do not overlap in symbols with the SRS resources.
+  /// \remark This parameter should be computed by the GNB and not exposed to the user configuration interface.
+  bounded_integer<unsigned, 1, 14> max_nof_symbols = NOF_OFDM_SYM_PER_SLOT_NORMAL_CP;
+};
+
+struct srs_builder_params {
+  /// Enable Sound Reference Signals (SRS) for the UEs within this cell.
+  bool srs_enabled = false;
+  /// Maximum number of symbols per UL slot dedicated for SRS resources.
+  /// \remark In case of Sounding Reference Signals (SRS) being used, the number of symbols should be reduced so that
+  /// the PUCCH resources do not overlap in symbols with the SRS resources.
+  /// \remark The SRS resources are always placed at the end of the slot.
+  /// \remark As per TS 38.211, Section 6.4.1.4.1, SRS resource can only be placed in the last 6 symbols of a slot.
+  bounded_integer<unsigned, 1, 6> max_nof_symbols = 2U;
 };
 
 /// Parameters that are used to initialize or build the \c PhysicalCellGroupConfig, TS 38.331.
 struct phy_cell_group_params {
   /// \brief \c p-NR-FR1, part \c PhysicalCellGroupConfig, TS 38.331.
   /// The maximum total TX power to be used by the UE in this NR cell group across all serving cells in FR1.
-  optional<bounded_integer<int, -30, 33>> p_nr_fr1;
+  std::optional<bounded_integer<int, -30, 33>> p_nr_fr1;
 };
 
 /// Parameters that are used to initialize or build the \c MAC-CellGroupConfig, TS 38.331.
 struct mac_cell_group_params {
-  periodic_bsr_timer                       periodic_timer = periodic_bsr_timer::sf10;
-  retx_bsr_timer                           retx_timer     = retx_bsr_timer::sf80;
-  optional<logical_channel_sr_delay_timer> lc_sr_delay_timer;
-  optional<sr_prohib_timer>                sr_prohibit_timer;
-  sr_max_tx                                max_tx           = sr_max_tx::n64;
-  phr_prohibit_timer                       phr_prohib_timer = phr_prohibit_timer::sf10;
+  periodic_bsr_timer                            periodic_timer = periodic_bsr_timer::sf10;
+  retx_bsr_timer                                retx_timer     = retx_bsr_timer::sf80;
+  std::optional<logical_channel_sr_delay_timer> lc_sr_delay_timer;
+  std::optional<sr_prohib_timer>                sr_prohibit_timer;
+  sr_max_tx                                     max_tx           = sr_max_tx::n64;
+  phr_prohibit_timer                            phr_prohib_timer = phr_prohibit_timer::sf10;
 };
 
 /// Cell Configuration, including common and UE-dedicated configs, that the DU will use to generate other configs for
@@ -144,7 +170,7 @@ struct du_cell_config {
   cell_selection_info cell_sel_info;
 
   /// Content and scheduling information of SI-messages.
-  optional<si_scheduling_info_config> si_config;
+  std::optional<si_scheduling_info_config> si_config;
 
   /// \c ueTimersAndConstants, sent in \c SIB1, as per TS 38.331.
   ue_timers_and_constants_config ue_timers_and_constants;
@@ -154,7 +180,7 @@ struct du_cell_config {
   ul_config_common ul_cfg_common;
 
   /// Defines the TDD DL-UL pattern and periodicity. If no value is set, the cell is in FDD mode.
-  optional<tdd_ul_dl_config_common> tdd_ul_dl_cfg_common;
+  std::optional<tdd_ul_dl_config_common> tdd_ul_dl_cfg_common;
 
   /// UE-dedicated serving cell configuration.
   serving_cell_config ue_ded_serv_cell_cfg;
@@ -168,8 +194,14 @@ struct du_cell_config {
   /// Parameters for PUCCH-Config generation.
   pucch_builder_params pucch_cfg;
 
+  /// Parameters for SRS-Config generation.
+  srs_builder_params srs_cfg;
+
   /// Defines the maximum allowable channel delay in slots when runnning in NTN mode. seee (TS 38.300 section 16.14.2)
   unsigned ntn_cs_koffset = 0;
+
+  /// List of RAN slices to support in the scheduler.
+  std::vector<slice_rrm_policy_config> rrm_policy_members;
 };
 
 } // namespace srsran

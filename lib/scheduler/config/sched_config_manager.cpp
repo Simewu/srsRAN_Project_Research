@@ -24,13 +24,14 @@
 #include "../logging/scheduler_metrics_ue_configurator.h"
 #include "srsran/scheduler/config/scheduler_cell_config_validator.h"
 #include "srsran/scheduler/config/scheduler_ue_config_validator.h"
+#include "srsran/srslog/srslog.h"
 
 using namespace srsran;
 
 ue_config_update_event::ue_config_update_event(du_ue_index_t                     ue_index_,
                                                sched_config_manager&             parent_,
                                                std::unique_ptr<ue_configuration> next_cfg,
-                                               const optional<bool>&             set_fallback) :
+                                               const std::optional<bool>&        set_fallback) :
   ue_index(ue_index_), parent(&parent_), next_ded_cfg(std::move(next_cfg)), set_fallback_mode(set_fallback)
 {
 }
@@ -66,33 +67,28 @@ void ue_config_delete_event::reset()
   }
 }
 
-sched_config_manager::sched_config_manager(const scheduler_config&        sched_cfg,
-                                           sched_metrics_ue_configurator& metrics_handler_) :
+sched_config_manager::sched_config_manager(const scheduler_config& sched_cfg) :
   expert_params(sched_cfg.expert_params),
   config_notifier(sched_cfg.config_notifier),
-  metrics_handler(metrics_handler_),
   logger(srslog::fetch_basic_logger("SCHED"))
 {
   std::fill(ue_to_cell_group_index.begin(), ue_to_cell_group_index.end(), INVALID_DU_CELL_GROUP_INDEX);
 }
 
-const cell_configuration* sched_config_manager::add_cell(const sched_cell_configuration_request_message& msg)
+const cell_configuration* sched_config_manager::add_cell(const sched_cell_configuration_request_message& msg,
+                                                         sched_metrics_ue_configurator& metrics_handler_)
 {
   srsran_assert(msg.cell_index < MAX_NOF_DU_CELLS, "cell index={} is not valid", msg.cell_index);
   srsran_assert(not added_cells.contains(msg.cell_index), "cell={} already exists", msg.cell_index);
 
   // Ensure the common cell config is valid.
   auto ret = config_validators::validate_sched_cell_configuration_request_message(msg, expert_params);
-  srsran_assert(not ret.is_error(), "Invalid cell configuration request message. Cause: {}", ret.error().c_str());
+  srsran_assert(ret.has_value(), "Invalid cell configuration request message. Cause: {}", ret.error().c_str());
 
   added_cells.emplace(msg.cell_index, std::make_unique<cell_configuration>(expert_params, msg));
+  cell_metrics.emplace(msg.cell_index, &metrics_handler_);
 
-  // Update DU cell index to group lookup.
-  du_cell_to_cell_group_index.emplace(msg.cell_index, msg.cell_group_index);
-
-  logger.info("cell={}: Cell configured successfully.", msg.cell_index);
-
-  return &*added_cells[msg.cell_index];
+  return added_cells[msg.cell_index].get();
 }
 
 ue_config_update_event sched_config_manager::add_ue(const sched_ue_creation_request_message& cfg_req)
@@ -119,7 +115,7 @@ ue_config_update_event sched_config_manager::add_ue(const sched_ue_creation_requ
 
   error_type<std::string> result =
       config_validators::validate_sched_ue_creation_request_message(cfg_req, *added_cells[pcell_index]);
-  if (result.is_error()) {
+  if (not result.has_value()) {
     logger.warning("ue={} rnti={}: Discarding invalid UE creation request. Cause: {}",
                    cfg_req.ue_index,
                    cfg_req.crnti,
@@ -205,8 +201,12 @@ void sched_config_manager::handle_ue_config_complete(du_ue_index_t ue_index, std
 
     if (ue_cfg_list[ue_index] == nullptr) {
       // UE creation case.
-      metrics_handler.handle_ue_creation(
-          ue_index, next_cfg->crnti, next_cfg->pcell_common_cfg().pci, next_cfg->pcell_common_cfg().nof_dl_prbs);
+      cell_metrics[next_cfg->pcell_common_cfg().cell_index]->handle_ue_creation(
+          ue_index,
+          next_cfg->crnti,
+          next_cfg->pcell_common_cfg().pci,
+          next_cfg->pcell_common_cfg().nof_dl_prbs,
+          next_cfg->pcell_common_cfg().nof_slots_per_frame);
     }
 
     // Stores new UE config and deletes old config.
@@ -228,11 +228,13 @@ void sched_config_manager::handle_ue_config_complete(du_ue_index_t ue_index, std
 
 void sched_config_manager::handle_ue_delete_complete(du_ue_index_t ue_index)
 {
+  du_cell_index_t pcell_idx = ue_cfg_list[ue_index]->pcell_common_cfg().cell_index;
+
   // Deletes UE config.
   ue_cfg_list[ue_index].reset();
 
   // Remove UE from metrics.
-  metrics_handler.handle_ue_deletion(ue_index);
+  cell_metrics[pcell_idx]->handle_ue_deletion(ue_index);
 
   // Mark the UE as released.
   ue_to_cell_group_index[ue_index].store(INVALID_DU_CELL_GROUP_INDEX, std::memory_order_release);

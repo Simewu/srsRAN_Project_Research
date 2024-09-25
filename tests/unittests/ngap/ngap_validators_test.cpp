@@ -82,7 +82,8 @@ public:
                                                                                              ran_ue_id_t ran_ue_id)
   {
     pdu_session_id_t setup_psi = uint_to_pdu_session_id(1);
-    ngap_message ngap_msg = generate_valid_pdu_session_resource_setup_request_message(amf_ue_id, ran_ue_id, setup_psi);
+    ngap_message     ngap_msg  = generate_valid_pdu_session_resource_setup_request_message(
+        amf_ue_id, ran_ue_id, {{setup_psi, {{uint_to_qos_flow_id(1), 9}}}});
 
     auto& pdu_session_res_setup_req = ngap_msg.pdu.init_msg().value.pdu_session_res_setup_request();
 
@@ -99,7 +100,8 @@ public:
       ran_ue_id_t      ran_ue_id,
       pdu_session_id_t psi)
   {
-    ngap_message ngap_msg = generate_valid_pdu_session_resource_setup_request_message(amf_ue_id, ran_ue_id, psi);
+    ngap_message ngap_msg = generate_valid_pdu_session_resource_setup_request_message(
+        amf_ue_id, ran_ue_id, {{psi, {{uint_to_qos_flow_id(1), 9}}}});
 
     auto& asn1_request                         = ngap_msg.pdu.init_msg().value.pdu_session_res_setup_request();
     asn1_request->ue_aggr_max_bit_rate_present = false;
@@ -108,7 +110,7 @@ public:
     asn1::ngap::pdu_session_res_setup_request_transfer_s asn1_setup_req_transfer;
 
     asn1_setup_req_transfer->ul_ngu_up_tnl_info.set_gtp_tunnel();
-    transport_layer_address addr{"127.0.0.1"};
+    auto addr = transport_layer_address::create_from_string("127.0.0.1");
     asn1_setup_req_transfer->ul_ngu_up_tnl_info.gtp_tunnel().transport_layer_address.from_string(addr.to_bitstring());
     asn1_setup_req_transfer->ul_ngu_up_tnl_info.gtp_tunnel().gtp_teid.from_number(1);
 
@@ -195,8 +197,8 @@ TEST_F(ngap_validator_test, when_valid_request_received_then_pdu_session_setup_s
   amf_ue_id_t amf_ue_id = uint_to_amf_ue_id(0);
   ran_ue_id_t ran_ue_id = uint_to_ran_ue_id(0);
 
-  ngap_message ngap_msg =
-      generate_valid_pdu_session_resource_setup_request_message(amf_ue_id, ran_ue_id, uint_to_pdu_session_id(1));
+  ngap_message ngap_msg = generate_valid_pdu_session_resource_setup_request_message(
+      amf_ue_id, ran_ue_id, {{uint_to_pdu_session_id(1), {{uint_to_qos_flow_id(1), 9}}}});
 
   auto& asn1_request = ngap_msg.pdu.init_msg().value.pdu_session_res_setup_request();
 

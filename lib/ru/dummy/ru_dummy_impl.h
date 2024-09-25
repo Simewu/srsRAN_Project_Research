@@ -81,8 +81,17 @@ private:
   // See ru_controller for documentation.
   void stop() override;
 
+  // See ru_controller interface for documentation.
+  bool set_tx_gain(unsigned port_id, double gain_dB) override { return false; }
+
+  // See ru_controller interface for documentation.
+  bool set_rx_gain(unsigned port_id, double gain_dB) override { return false; }
+
+  // See ru_controller interface for documentation.
+  void print_metrics() override;
+
   // See ru_downlink_plane_handler for documentation.
-  void handle_dl_data(const resource_grid_context& context, const resource_grid_reader& grid) override
+  void handle_dl_data(const resource_grid_context& context, const shared_resource_grid& grid) override
   {
     interval<unsigned> sector_range(0, sectors.size());
     srsran_assert(sector_range.contains(context.sector),
@@ -104,7 +113,7 @@ private:
   }
 
   // See ru_uplink_plane_handler for documentation.
-  void handle_new_uplink_slot(const resource_grid_context& context, resource_grid& grid) override
+  void handle_new_uplink_slot(const resource_grid_context& context, const shared_resource_grid& grid) override
   {
     interval<unsigned> sector_range(0, sectors.size());
     srsran_assert(sector_range.contains(context.sector),

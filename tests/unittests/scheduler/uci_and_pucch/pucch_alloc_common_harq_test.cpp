@@ -119,18 +119,20 @@ protected:
 // Tests the output of the PUCCH allocator (or PUCCH PDU).
 TEST_P(test_pucch_harq_common_output, test_pucch_output_info)
 {
-  optional<unsigned> pucch_res_indicator = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
+  std::optional<unsigned> pucch_res_indicator = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
       t_bench.res_grid, t_bench.get_main_ue().crnti, t_bench.k0, t_bench.k1, t_bench.dci_info);
 
   ASSERT_TRUE(pucch_res_indicator.has_value());
   ASSERT_FALSE(t_bench.res_grid[t_bench.k0 + t_bench.k1].result.ul.pucchs.empty());
-  ASSERT_TRUE(assess_ul_pucch_info(pucch_expected, t_bench.res_grid[t_bench.k0 + t_bench.k1].result.ul.pucchs.back()));
+  ASSERT_TRUE(
+      find_pucch_pdu(t_bench.res_grid[t_bench.k0 + t_bench.k1].result.ul.pucchs,
+                     [&expected = pucch_expected](const auto& pdu) { return pucch_info_match(expected, pdu); }));
 }
 
 // Tests whether PUCCH allocator returns the correct values for the DCI.
 TEST_P(test_pucch_harq_common_output, test_pucch_output_for_dci)
 {
-  optional<unsigned> pucch_res_indicator = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
+  std::optional<unsigned> pucch_res_indicator = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
       t_bench.res_grid, t_bench.get_main_ue().crnti, t_bench.k0, t_bench.k1, t_bench.dci_info);
 
   ASSERT_TRUE(pucch_res_indicator.has_value());
@@ -261,29 +263,31 @@ protected:
 
 TEST_F(test_pucch_harq_common_multiple_allocation, test_pucch_double_alloc)
 {
-  const optional<unsigned> pucch_res_indicator = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
+  const std::optional<unsigned> pucch_res_indicator = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
       t_bench.res_grid, t_bench.get_main_ue().crnti, t_bench.k0, t_bench.k1, t_bench.dci_info);
   ASSERT_TRUE(pucch_res_indicator.has_value());
 
-  // If we allocate the same UE twice, the scheduler is expected to allocate a different PUCCH common resource.
-  optional<unsigned> pucch_res_indicator_1 = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
+  // If we allocate the same UE twice, the scheduler is expected to fail, as we don't support PUCCH multiplexing on
+  // PUCCH common resources.
+  std::optional<unsigned> pucch_res_indicator_1 = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
       t_bench.res_grid, t_bench.get_main_ue().crnti, t_bench.k0, t_bench.k1, t_bench.dci_info);
-  ASSERT_TRUE(pucch_res_indicator_1.has_value());
-  ASSERT_NE(pucch_res_indicator_1.value(), pucch_res_indicator.value());
+  ASSERT_FALSE(pucch_res_indicator_1.has_value());
 }
 
 TEST_F(test_pucch_harq_common_multiple_allocation, test_pucch_out_of_resources)
 {
   // For this specific n_cce value (1) and for d_pri = {0,...,7}, we get 8 r_pucch values. This is the maximum number of
   // UEs we can allocate.
-  for (unsigned n_ue = 0; n_ue != 8; ++n_ue) {
-    const optional<unsigned> pucch_res_indicator = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
-        t_bench.res_grid, t_bench.get_main_ue().crnti, t_bench.k0, t_bench.k1, t_bench.dci_info);
+  for (uint16_t n_ue = 0; n_ue != 8; ++n_ue) {
+    t_bench.add_ue();
+    du_ue_index_t                 ue_idx = to_du_ue_index(static_cast<uint16_t>(t_bench.get_main_ue().ue_index) + n_ue);
+    const std::optional<unsigned> pucch_res_indicator = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
+        t_bench.res_grid, t_bench.get_ue(ue_idx).crnti, t_bench.k0, t_bench.k1, t_bench.dci_info);
     ASSERT_TRUE(pucch_res_indicator.has_value());
   }
 
   // If we allocate an extra UE, the scheduler is expected to fail.
-  const optional<unsigned> pucch_res_indicator_1 = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
+  const std::optional<unsigned> pucch_res_indicator_1 = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
       t_bench.res_grid, t_bench.get_main_ue().crnti, t_bench.k0, t_bench.k1, t_bench.dci_info);
   ASSERT_FALSE(pucch_res_indicator_1.has_value());
 }
@@ -303,13 +307,14 @@ TEST_F(test_pucch_harq_common_multiple_allocation, test_on_full_grid)
   // Fill the entire grid and verify the PUCCH gets allocated anyway.
   t_bench.fill_all_grid(t_bench.sl_tx + t_bench.k1);
 
-  const optional<unsigned> pucch_res_indicator_1 = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
+  const std::optional<unsigned> pucch_res_indicator_1 = t_bench.pucch_alloc.alloc_common_pucch_harq_ack_ue(
       t_bench.res_grid, t_bench.get_main_ue().crnti, t_bench.k0, t_bench.k1, t_bench.dci_info);
   ASSERT_TRUE(pucch_res_indicator_1.has_value());
 
   ASSERT_FALSE(t_bench.res_grid[t_bench.k0 + t_bench.k1].result.ul.pucchs.empty());
-  const pucch_info& pucch_pdu_test = t_bench.res_grid[t_bench.k0 + t_bench.k1].result.ul.pucchs.back();
 
   ASSERT_EQ(0, pucch_res_indicator_1.value());
-  ASSERT_TRUE(assess_ul_pucch_info(pucch_pdu_benchmark, pucch_pdu_test));
+  ASSERT_TRUE(
+      find_pucch_pdu(t_bench.res_grid[t_bench.k0 + t_bench.k1].result.ul.pucchs,
+                     [&expected = pucch_pdu_benchmark](const auto& pdu) { return pucch_info_match(expected, pdu); }));
 }

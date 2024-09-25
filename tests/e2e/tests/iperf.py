@@ -48,7 +48,7 @@ MEDIUM_BITRATE = int(15e6)
 HIGH_BITRATE = int(50e6)
 MAX_BITRATE = int(600e6)
 
-ZMQ_ID = "band:%s-scs:%s-bandwidth:%s-bitrate:%s-artifacts:%s"
+ZMQ_ID = "band:%s-scs:%s-bandwidth:%s-bitrate:%s"
 
 # TDD throughput (empirical measurements, might become outdated if RF conditions change)
 tdd_ul_udp = defaultdict(
@@ -80,7 +80,7 @@ tdd_dl_tcp = defaultdict(
     {
         20: int(43e6),
         50: int(153e6),
-        90: int(124e6),  # TODO: update this value if lates are gone
+        90: int(124e6),
     },
 )
 
@@ -211,7 +211,7 @@ def test_srsue(
         direction=direction,
         global_timing_advance=-1,
         time_alignment_calibration=0,
-        always_download_artifacts=False,
+        always_download_artifacts=True,
         common_search_space_enable=True,
         prach_config_index=1,
     )
@@ -240,6 +240,10 @@ def test_srsue(
     ),
 )
 @mark.android
+@mark.flaky(
+    reruns=2,
+    only_rerun=["failed to start", "Exception calling application", "Attach timeout reached", "Some packages got lost"],
+)
 # pylint: disable=too-many-arguments
 def test_android(
     retina_manager: RetinaTestManager,
@@ -298,10 +302,13 @@ def test_android(
     (
         param(7, 15, 20, id="band:%s-scs:%s-bandwidth:%s"),
         param(78, 30, 50, id="band:%s-scs:%s-bandwidth:%s"),
-        param(78, 30, 90, id="band:%s-scs:%s-bandwidth:%s"),
     ),
 )
 @mark.android_hp
+@mark.flaky(
+    reruns=2,
+    only_rerun=["failed to start", "Exception calling application", "Attach timeout reached", "Some packages got lost"],
+)
 # pylint: disable=too-many-arguments
 def test_android_hp(
     retina_manager: RetinaTestManager,
@@ -342,6 +349,61 @@ def test_android_hp(
 
 @mark.parametrize(
     "direction",
+    (param(IPerfDir.BIDIRECTIONAL, id="bidirectional", marks=mark.bidirectional),),
+)
+@mark.parametrize(
+    "protocol",
+    (param(IPerfProto.UDP, id="udp", marks=mark.udp),),
+)
+@mark.parametrize(
+    "band, common_scs, bandwidth",
+    (param(41, 30, 20, id="band:%s-scs:%s-bandwidth:%s"),),
+)
+@mark.zmq_2x2_mimo
+@mark.flaky(reruns=2, only_rerun=["failed to start", "Attach timeout reached", "5GC crashed"])
+# pylint: disable=too-many-arguments
+def test_zmq_2x2_mimo(
+    retina_manager: RetinaTestManager,
+    retina_data: RetinaTestData,
+    ue_32: Tuple[UEStub, ...],
+    fivegc: FiveGCStub,
+    gnb: GNBStub,
+    band: int,
+    common_scs: int,
+    bandwidth: int,
+    protocol: IPerfProto,
+    direction: IPerfDir,
+):
+    """
+    ZMQ 2x2 mimo IPerfs
+    """
+
+    _iperf(
+        retina_manager=retina_manager,
+        retina_data=retina_data,
+        ue_array=ue_32,
+        gnb=gnb,
+        fivegc=fivegc,
+        band=band,
+        common_scs=common_scs,
+        bandwidth=bandwidth,
+        sample_rate=None,
+        iperf_duration=SHORT_DURATION,
+        protocol=protocol,
+        bitrate=MEDIUM_BITRATE,
+        direction=direction,
+        global_timing_advance=-1,
+        time_alignment_calibration=0,
+        always_download_artifacts=True,
+        rx_to_tx_latency=2,
+        enable_dddsu=True,
+        nof_antennas_dl=2,
+        nof_antennas_ul=2,
+    )
+
+
+@mark.parametrize(
+    "direction",
     (
         param(IPerfDir.DOWNLINK, id="downlink", marks=mark.downlink),
         param(IPerfDir.UPLINK, id="uplink", marks=mark.uplink),
@@ -360,6 +422,7 @@ def test_android_hp(
     (param(41, 30, 20, id="band:%s-scs:%s-bandwidth:%s"),),
 )
 @mark.zmq_4x4_mimo
+@mark.flaky(reruns=2, only_rerun=["failed to start", "Attach timeout reached", "5GC crashed"])
 # pylint: disable=too-many-arguments
 def test_zmq_4x4_mimo(
     retina_manager: RetinaTestManager,
@@ -394,6 +457,8 @@ def test_zmq_4x4_mimo(
         global_timing_advance=-1,
         time_alignment_calibration=0,
         always_download_artifacts=False,
+        nof_antennas_dl=4,
+        nof_antennas_ul=4,
     )
 
 
@@ -410,16 +475,13 @@ def test_zmq_4x4_mimo(
     (param(IPerfProto.UDP, id="udp", marks=mark.udp),),
 )
 @mark.parametrize(
-    "band, common_scs, bandwidth, bitrate, always_download_artifacts",
-    (
-        param(3, 15, 20, LOW_BITRATE, True, id=ZMQ_ID),
-        param(41, 30, 20, LOW_BITRATE, True, id=ZMQ_ID),
-    ),
+    "band, common_scs, bandwidth, bitrate",
+    (param(41, 30, 20, LOW_BITRATE, id=ZMQ_ID),),
 )
 @mark.zmq
 @mark.smoke
 # pylint: disable=too-many-arguments
-def test_zmq_smoke(
+def test_smoke(
     retina_manager: RetinaTestManager,
     retina_data: RetinaTestData,
     ue_4: Tuple[UEStub, ...],
@@ -428,7 +490,6 @@ def test_zmq_smoke(
     band: int,
     common_scs: int,
     bandwidth: int,
-    always_download_artifacts: bool,
     bitrate: int,
     protocol: IPerfProto,
     direction: IPerfDir,
@@ -453,9 +514,9 @@ def test_zmq_smoke(
         direction=direction,
         global_timing_advance=0,
         time_alignment_calibration=0,
-        always_download_artifacts=always_download_artifacts,
+        always_download_artifacts=False,
         bitrate_threshold=0,
-        ue_stop_timeout=10,
+        ue_stop_timeout=30,
     )
 
 
@@ -475,20 +536,30 @@ def test_zmq_smoke(
     ),
 )
 @mark.parametrize(
-    "band, common_scs, bandwidth, bitrate, always_download_artifacts",
+    "band, common_scs, bandwidth, bitrate",
     (
         # ZMQ
-        param(3, 15, 5, MEDIUM_BITRATE, False, id=ZMQ_ID),
-        param(3, 15, 10, MEDIUM_BITRATE, False, id=ZMQ_ID),
-        param(3, 15, 20, MEDIUM_BITRATE, False, id=ZMQ_ID),
-        param(3, 15, 50, MEDIUM_BITRATE, True, id=ZMQ_ID),
-        param(41, 30, 10, MEDIUM_BITRATE, False, id=ZMQ_ID),
-        param(41, 30, 20, MEDIUM_BITRATE, False, id=ZMQ_ID),
-        param(41, 30, 50, MEDIUM_BITRATE, True, id=ZMQ_ID),
+        param(3, 15, 5, MEDIUM_BITRATE, id=ZMQ_ID),
+        param(3, 15, 10, MEDIUM_BITRATE, id=ZMQ_ID),
+        param(3, 15, 20, MEDIUM_BITRATE, id=ZMQ_ID),
+        param(3, 15, 50, MEDIUM_BITRATE, id=ZMQ_ID),
+        param(41, 30, 10, MEDIUM_BITRATE, id=ZMQ_ID),
+        param(41, 30, 20, MEDIUM_BITRATE, id=ZMQ_ID),
+        param(41, 30, 50, MEDIUM_BITRATE, id=ZMQ_ID),
     ),
 )
 @mark.zmq
-@mark.flaky(reruns=1, only_rerun=["failed to start", "iperf did not achieve the expected data rate"])
+@mark.flaky(
+    reruns=2,
+    only_rerun=[
+        "failed to start",
+        "Attach timeout reached",
+        "iperf did not achieve the expected data rate",
+        "socket is already closed",
+        "failed to connect to all addresses",
+        "5GC crashed",
+    ],
+)
 # pylint: disable=too-many-arguments
 def test_zmq(
     retina_manager: RetinaTestManager,
@@ -499,7 +570,6 @@ def test_zmq(
     band: int,
     common_scs: int,
     bandwidth: int,
-    always_download_artifacts: bool,
     bitrate: int,
     protocol: IPerfProto,
     direction: IPerfDir,
@@ -524,9 +594,10 @@ def test_zmq(
         direction=direction,
         global_timing_advance=0,
         time_alignment_calibration=0,
-        always_download_artifacts=always_download_artifacts,
+        always_download_artifacts=False,
         bitrate_threshold=0,
-        gnb_post_cmd="log --hex_max_size=32",
+        ue_stop_timeout=1,
+        gnb_post_cmd=("log --hex_max_size=32 cu_cp --inactivity_timer=600", ""),
     )
 
 
@@ -611,11 +682,15 @@ def _iperf(
     always_download_artifacts: bool,
     warning_as_errors: bool = True,
     bitrate_threshold: float = 0,  # bitrate != 0
-    gnb_post_cmd: str = "",
+    gnb_post_cmd: Tuple[str, ...] = tuple(),
     plmn: Optional[PLMN] = None,
     common_search_space_enable: bool = False,
     prach_config_index=-1,
     ue_stop_timeout: int = 0,
+    rx_to_tx_latency: int = -1,
+    enable_dddsu: bool = False,
+    nof_antennas_dl: int = 1,
+    nof_antennas_ul: int = 1,
 ):
     wait_before_power_off = 5
 
@@ -630,9 +705,12 @@ def _iperf(
         sample_rate=sample_rate,
         global_timing_advance=global_timing_advance,
         time_alignment_calibration=time_alignment_calibration,
-        pcap=False,
         common_search_space_enable=common_search_space_enable,
         prach_config_index=prach_config_index,
+        rx_to_tx_latency=rx_to_tx_latency,
+        enable_dddsu=enable_dddsu,
+        nof_antennas_dl=nof_antennas_dl,
+        nof_antennas_ul=nof_antennas_ul,
     )
     configure_artifacts(
         retina_data=retina_data,

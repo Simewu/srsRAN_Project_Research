@@ -86,6 +86,7 @@ int main(int argc, char** argv)
              "iperf -c 127.0.0.1 -u -b 5G -p 56701  -P 2 -t 3600 --no-udp-fin\n");
 
   // init GW logger
+  srslog::fetch_basic_logger("IO-EPOLL", true).set_level(srslog::basic_levels::warning);
   srslog::fetch_basic_logger("UDP-GW", true).set_level(srslog::basic_levels::warning);
   srslog::fetch_basic_logger("UDP-GW", true).set_hex_dump_max_size(100);
 
@@ -109,9 +110,8 @@ int main(int argc, char** argv)
   std::unique_ptr<io_broker> epoll_broker;
 
   epoll_broker = create_io_broker(io_broker_type::epoll);
-  bool success = epoll_broker->register_fd(gw->get_socket_fd(), [&gw](int fd) { gw->receive(); });
-  if (!success) {
-    report_fatal_error("Failed to register UDP network gateway at IO broker. socket_fd={}", gw->get_socket_fd());
+  if (not gw->subscribe_to(*epoll_broker)) {
+    report_fatal_error("Failed to register UDP network gateway at IO broker.");
   }
 
   // Wait for all packets to be received
@@ -125,6 +125,8 @@ int main(int argc, char** argv)
   fmt::print("Rx done\n\n");
 
   std::this_thread::sleep_for(std::chrono::milliseconds(750));
+
+  gw.reset();
 
   uint64_t rx_duration_us = gw_dn.get_t_rx().count();
   uint64_t rx_bytes       = gw_dn.get_rx_bytes();

@@ -31,7 +31,7 @@ using namespace srsran::security;
 /// Converts a hex string (e.g. 01FA02) to a sec_as_key.
 sec_key make_sec_key(std::string hex_str)
 {
-  byte_buffer key_buf = make_byte_buffer(hex_str);
+  byte_buffer key_buf = make_byte_buffer(hex_str).value();
   sec_key     key     = {};
   std::copy(key_buf.begin(), key_buf.end(), key.begin());
   return key;
@@ -40,7 +40,7 @@ sec_key make_sec_key(std::string hex_str)
 /// Converts a hex string (e.g. 01FA02) to a sec_128_as_key.
 sec_128_key make_sec_128_key(std::string hex_str)
 {
-  byte_buffer key_buf = make_byte_buffer(hex_str);
+  byte_buffer key_buf = make_byte_buffer(hex_str).value();
   sec_128_key key     = {};
   std::copy(key_buf.begin(), key_buf.end(), key.begin());
   return key;
@@ -77,8 +77,8 @@ TEST(security_nea1_test, testset1)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -109,8 +109,8 @@ TEST(security_nea1_test, testset2)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -136,8 +136,8 @@ TEST(security_nea1_test, testset3)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -167,8 +167,8 @@ TEST(security_nea1_test, testset4)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -200,8 +200,8 @@ TEST(security_nea1_test, testset5)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -245,8 +245,8 @@ TEST(security_nea1_test, testset6)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -264,20 +264,20 @@ TEST(security_nia1_test, testset1)
   uint8_t     direction    = 0;
   const char* ik_cstr      = "2bd6459f82c5b300952c49104881ff48";
   uint32_t    length       = 88;
-  const char* message_cstr = "33323462633938613734790000000000";
+  const char* message_cstr = "3332346263393861373479";
   const char* mact_cstr    = "731f1165";
 
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 }
 
 /// 128-NIA1 Test Set 2
@@ -296,14 +296,40 @@ TEST(security_nia1_test, testset2)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA1 Test Set 2 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.3, TS 33.401 Sec. C.4 128-EIA1
+TEST(security_nia1_test, testset2_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i      = 0x36af6144;
+  uint8_t     bearer       = 0x18;
+  uint8_t     direction    = 1;
+  const char* ik_cstr      = "7e5e94431e11d73828d739cc6ced4573";
+  uint32_t    length       = 256;
+  const char* message_cstr = "b3d3c9170a4e1632f60f861013d22d84b726b6a278d802d1eeaf1321ba5929dc";
+  const char* mact_cstr    = "666f3e58";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 }
 
 /// 128-NIA1 Test Set 3
@@ -323,14 +349,41 @@ TEST(security_nia1_test, testset3)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA1 Test Set 3 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.3, TS 33.401 Sec. C.4 128-EIA1
+TEST(security_nia1_test, testset3_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i      = 0xc7590ea9;
+  uint8_t     bearer       = 0x17;
+  uint8_t     direction    = 0;
+  const char* ik_cstr      = "d3419be821087acd02123a9248033359";
+  uint32_t    length       = 512;
+  const char* message_cstr = "bbb057038809496bcff86d6fbc8ce5b135a06b166054f2d565be8ace75dc851e0bcdd8f07141c495872fb5d8c"
+                             "0c66a8b6da556663e4e461205d84580bee5bc7e";
+  const char* mact_cstr    = "27986aa7";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 }
 
 /// 128-NIA1 Test Set 4
@@ -351,14 +404,14 @@ TEST(security_nia1_test, testset4)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 }
 
 /// 128-NIA1 Test Set 5
@@ -378,14 +431,41 @@ TEST(security_nia1_test, testset5)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA1 Test Set 5 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.3, TS 33.401 Sec. C.4 128-EIA1
+TEST(security_nia1_test, testset5_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i   = 0x36af6144;
+  uint8_t     bearer    = 0x18;
+  uint8_t     direction = 0;
+  const char* ik_cstr   = "6832a65cff4473621ebdd4ba26a921fe";
+  uint32_t    length    = 384;
+  const char* message_cstr =
+      "d3c53839626820717765667620323837636240981ba6824c1bfb1ab485472029b71d808ce33e2cc3c0b5fc1f3de8a6dc";
+  const char* mact_cstr = "bd09fa41";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 }
 
 /// 128-NIA1 Test Set 6
@@ -410,14 +490,46 @@ TEST(security_nia1_test, testset6)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA1 Test Set 6 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.3, TS 33.401 Sec. C.4 128-EIA1
+TEST(security_nia1_test, testset6_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i   = 0x7827fab2;
+  uint8_t     bearer    = 0x05;
+  uint8_t     direction = 1;
+  const char* ik_cstr   = "5d0a80d8134ae19677824b671e838af4";
+  uint32_t    length    = 2560;
+  const char* message_cstr =
+      "70dedf2dc42c5cbd3a96f8a0b11418b3608d5733604a2cd36aabc70ce3193bb5153be2d3c06dfdb2d16e9c357158be6a41d6b861e491db3f"
+      "bfeb518efcf048d7d58953730ff30c9ec470ffcd663dc34201c36addc0111c35b38afee7cfdb582e3731f8b4baa8d1a89c06e81199a97162"
+      "27be344efcb436ddd0f096c064c3b5e2c399993fc77394f9e09720a811850ef23b2ee05d9e6173609d86e1c0c18ea51a012a00bb413b9cb8"
+      "188a703cd6bae31cc67b34b1b00019e6a2b2a690f02671fe7c9ef8dec0094e533763478d58d2c5f5b827a0148c5948a96931acf84f465a64"
+      "e62ce74007e991e37ea823fa0fb21923b79905b733b631e6c7d6860a3831ac351a9c730c52ff72d9d308eedbab21fde143a0ea17e23edc1f"
+      "74cbb3638a2033aaa15464eaa733385dbbeb6fd73509b857e6a419dca1d8907af977fbac4dfa35ec";
+  const char* mact_cstr = "d7f391d8";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mact_out = {};
+  security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 }
 
 /// 128-NIA1 Test Set 7
@@ -473,14 +585,14 @@ TEST(security_nia1_test, testset7)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia1(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 }
 
 /// 128-NEA2 Test Set 1
@@ -499,8 +611,8 @@ TEST(security_nea2_test, testset1)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -528,8 +640,8 @@ TEST(security_nea2_test, testset2)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -553,8 +665,8 @@ TEST(security_nea2_test, testset3)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -582,8 +694,8 @@ TEST(security_nea2_test, testset4)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -613,8 +725,8 @@ TEST(security_nea2_test, testset5)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -656,8 +768,8 @@ TEST(security_nea2_test, testset6)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -684,14 +796,52 @@ TEST(security_nia2_test, testset1)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA2 Test Set 1 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+TEST(security_nia2_test, testset1_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i      = 0x38a6f056;
+  uint8_t     bearer       = 0x18;
+  uint8_t     direction    = 0;
+  const char* ik_cstr      = "2bd6459f82c5b300952c49104881ff48";
+  uint32_t    length       = 64;
+  const char* message_cstr = "3332346263393840";
+  const char* mact_cstr    = "c28458e9";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  {
+#ifdef MBEDTLS_CMAC_C
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+#endif
+  }
+  {
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+  }
 }
 
 /// 128-NIA2 Test Set 2
@@ -710,8 +860,8 @@ TEST(security_nia2_test, testset2)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   {
@@ -720,7 +870,7 @@ TEST(security_nia2_test, testset2)
     sec_mac          mact_out = {};
     security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
     EXPECT_EQ(message_view.length(), length / 8);
-    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 #endif
   }
   {
@@ -728,7 +878,7 @@ TEST(security_nia2_test, testset2)
     sec_mac          mact_out = {};
     security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
     EXPECT_EQ(message_view.length(), length / 8);
-    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
   }
 }
 
@@ -751,14 +901,52 @@ TEST(security_nia2_test, testset3)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA2 Test Set 3 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+TEST(security_nia2_test, testset3_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i      = 0x36af6144;
+  uint8_t     bearer       = 0x18;
+  uint8_t     direction    = 1;
+  const char* ik_cstr      = "7e5e94431e11d73828d739cc6ced4573";
+  uint32_t    length       = 256;
+  const char* message_cstr = "b3d3c9170a4e1632f60f861013d22d84b726b6a278d802d1eeaf1321ba5929dc";
+  const char* mact_cstr    = "fde6c737";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  {
+#ifdef MBEDTLS_CMAC_C
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+#endif
+  }
+  {
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+  }
 }
 
 /// 128-NIA2 Test Set 4
@@ -781,14 +969,53 @@ TEST(security_nia2_test, testset4)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA2 Test Set 4 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+TEST(security_nia2_test, testset4_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i      = 0xc7590ea9;
+  uint8_t     bearer       = 0x17;
+  uint8_t     direction    = 0;
+  const char* ik_cstr      = "d3419be821087acd02123a9248033359";
+  uint32_t    length       = 512;
+  const char* message_cstr = "bbb057038809496bcff86d6fbc8ce5b135a06b166054f2d565be8ace75dc851e0bcdd8f07141c495872fb5d8c"
+                             "0c66a8b6da556663e4e461205d84580bee5bc7e";
+  const char* mact_cstr    = "20c0dce4";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  {
+#ifdef MBEDTLS_CMAC_C
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+#endif
+  }
+  {
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+  }
 }
 
 /// 128-NIA2 Test Set 5
@@ -809,8 +1036,8 @@ TEST(security_nia2_test, testset5)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   {
@@ -819,7 +1046,7 @@ TEST(security_nia2_test, testset5)
     sec_mac          mact_out = {};
     security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
     EXPECT_EQ(message_view.length(), length / 8);
-    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 #endif
   }
   {
@@ -827,7 +1054,7 @@ TEST(security_nia2_test, testset5)
     sec_mac          mact_out = {};
     security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
     EXPECT_EQ(message_view.length(), length / 8);
-    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
   }
 }
 
@@ -851,14 +1078,56 @@ TEST(security_nia2_test, testset6)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA2 Test Set 6 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+/// Test set 6 uses a bit length that is not a multiple of 8 bits
+/// This is not supported by the CMAC variant of NIA2, thus only the
+/// fallback version is tested.
+TEST(security_nia2_test, testset6_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i   = 0x36af6144;
+  uint8_t     bearer    = 0x18;
+  uint8_t     direction = 0;
+  const char* ik_cstr   = "6832a65cff4473621ebdd4ba26a921fe";
+  uint32_t    length    = 384;
+  const char* message_cstr =
+      "d3c53839626820717765667620323837636240981ba6824c1bfb1ab485472029b71d808ce33e2cc3c0b5fc1f3de8a6dc";
+  const char* mact_cstr = "fe69c8ad";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  {
+#ifdef MBEDTLS_CMAC_C
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+#endif
+  }
+  {
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+  }
 }
 
 /// 128-NIA2 Test Set 7
@@ -886,14 +1155,61 @@ TEST(security_nia2_test, testset7)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mact_out = {};
   security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+  EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+}
+
+/// 128-NIA2 Test Set 7 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.5, TS 33.401 Sec. C.2 128-EIA2
+/// Test set 7 uses a bit length that is not a multiple of 8 bits
+/// This is not supported by the CMAC variant of NIA2, thus only the
+/// fallback version is tested.
+TEST(security_nia2_test, testset7_mod)
+{
+  // Testdata in plain format
+  uint32_t    count_i   = 0x7827fab2;
+  uint8_t     bearer    = 0x05;
+  uint8_t     direction = 1;
+  const char* ik_cstr   = "5d0a80d8134ae19677824b671e838af4";
+  uint32_t    length    = 2560;
+  const char* message_cstr =
+      "70dedf2dc42c5cbd3a96f8a0b11418b3608d5733604a2cd36aabc70ce3193bb5153be2d3c06dfdb2d16e9c357158be6a41d6b861e491db3f"
+      "bfeb518efcf048d7d58953730ff30c9ec470ffcd663dc34201c36addc0111c35b38afee7cfdb582e3731f8b4baa8d1a89c06e81199a97162"
+      "27be344efcb436ddd0f096c064c3b5e2c399993fc77394f9e09720a811850ef23b2ee05d9e6173609d86e1c0c18ea51a012a00bb413b9cb8"
+      "188a703cd6bae31cc67b34b1b00019e6a2b2a690f02671fe7c9ef8dec0094e533763478d58d2c5f5b827a0148c5948a96931acf84f465a64"
+      "e62ce74007e991e37ea823fa0fb21923b79905b733b631e6c7d6860a3831ac351a9c730c52ff72d9d308eedbab21fde143a0ea17e23edc1f"
+      "74cbb3638a2033aaa15464eaa733385dbbeb6fd73509b857e6a419dca1d8907af977fbac4dfa35ec";
+  const char* mact_cstr = "e5bfbdf7";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key      = make_sec_128_key(ik_cstr);
+  security_direction dir      = static_cast<security_direction>(direction);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
+
+  // Apply integrity check
+  {
+#ifdef MBEDTLS_CMAC_C
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+#endif
+  }
+  {
+    byte_buffer_view message_view{message};
+    sec_mac          mact_out = {};
+    security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
+    EXPECT_EQ(message_view.length(), length / 8);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
+  }
 }
 
 /// 128-NIA2 Test Set 8
@@ -949,8 +1265,8 @@ TEST(security_nia2_test, testset8)
   // Pack hex strings into srsran types
   sec_128_key        key      = make_sec_128_key(ik_cstr);
   security_direction dir      = static_cast<security_direction>(direction);
-  byte_buffer        message  = make_byte_buffer(message_cstr);
-  byte_buffer        mact_buf = make_byte_buffer(mact_cstr);
+  byte_buffer        message  = make_byte_buffer(message_cstr).value();
+  byte_buffer        mact_buf = make_byte_buffer(mact_cstr).value();
 
   // Apply integrity check
   {
@@ -959,7 +1275,7 @@ TEST(security_nia2_test, testset8)
     sec_mac          mact_out = {};
     security_nia2_cmac(mact_out, key, count_i, bearer, dir, message_view);
     EXPECT_EQ(message_view.length(), length / 8);
-    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
 #endif
   }
   {
@@ -967,7 +1283,7 @@ TEST(security_nia2_test, testset8)
     sec_mac          mact_out = {};
     security_nia2_non_cmac(mact_out, key, count_i, bearer, dir, message_view, length);
     EXPECT_EQ(message_view.length(), length / 8);
-    EXPECT_EQ(byte_buffer(mact_out), mact_buf);
+    EXPECT_EQ(byte_buffer::create(mact_out).value(), mact_buf);
   }
 }
 
@@ -989,8 +1305,8 @@ TEST(security_nea3_test, testset1)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -1020,8 +1336,8 @@ TEST(security_nea3_test, testset2)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -1055,8 +1371,8 @@ TEST(security_nea3_test, testset3)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -1096,8 +1412,8 @@ TEST(security_nea3_test, testset4)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -1141,8 +1457,8 @@ TEST(security_nea3_test, testset5)
   // Pack hex strings into srsran types
   sec_128_key        key        = make_sec_128_key(key_cstr);
   security_direction dir        = static_cast<security_direction>(direction);
-  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr);
-  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr);
+  byte_buffer        plaintext  = make_byte_buffer(plaintext_cstr).value();
+  byte_buffer        ciphertext = make_byte_buffer(ciphertext_cstr).value();
 
   // Apply ciphering and compare results
   byte_buffer_view plaintext_view{plaintext};
@@ -1162,20 +1478,48 @@ TEST(security_nia3_test, testset1)
   uint8_t     bearer       = 0x0;
   uint8_t     direction    = 0;
   uint32_t    length       = 1;
-  const char* message_cstr = "00000000";
+  const char* message_cstr = "00";
   const char* mac_cstr     = "c8a9595e";
 
   // Pack hex strings into srsran types
   sec_128_key        key     = make_sec_128_key(key_cstr);
   security_direction dir     = static_cast<security_direction>(direction);
-  byte_buffer        message = make_byte_buffer(message_cstr);
-  byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mac_out = {};
   security_nia3(mac_out, key, count, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mac_out), mac_buf);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
+}
+
+/// 128-NIA3 Test Set 1 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.7, TS 35.223 (Document 3) Sec. 4,
+/// ETSI TC SAGE "Specification of the 3GPP Confidentiality and Integrity Algorithms 128-EEA3 & 128-EIA3
+/// Document 3: Implementor's Test Data - Sec. 5
+TEST(security_nia3_test, testset1_mod)
+{
+  // Testdata in plain format
+  const char* key_cstr     = "00000000000000000000000000000000";
+  uint32_t    count        = 0x0;
+  uint8_t     bearer       = 0x0;
+  uint8_t     direction    = 0;
+  uint32_t    length       = 8;
+  const char* message_cstr = "00";
+  const char* mac_cstr     = "390a91b7";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key     = make_sec_128_key(key_cstr);
+  security_direction dir     = static_cast<security_direction>(direction);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
 }
 
 /// 128-NIA3 Test Set 2
@@ -1196,14 +1540,42 @@ TEST(security_nia3_test, testset2)
   // Pack hex strings into srsran types
   sec_128_key        key     = make_sec_128_key(key_cstr);
   security_direction dir     = static_cast<security_direction>(direction);
-  byte_buffer        message = make_byte_buffer(message_cstr);
-  byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mac_out = {};
   security_nia3(mac_out, key, count, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mac_out), mac_buf);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
+}
+
+/// 128-NIA3 Test Set 2 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.7, TS 35.223 (Document 3) Sec. 4,
+/// ETSI TC SAGE "Specification of the 3GPP Confidentiality and Integrity Algorithms 128-EEA3 & 128-EIA3
+/// Document 3: Implementor's Test Data - Sec. 5
+TEST(security_nia3_test, testset2_mod)
+{
+  // Testdata in plain format
+  const char* key_cstr     = "47054125561eb2dda94059da05097850";
+  uint32_t    count        = 0x561eb2dd;
+  uint8_t     bearer       = 0x14;
+  uint8_t     direction    = 0;
+  uint32_t    length       = 96;
+  const char* message_cstr = "000000000000000000000000";
+  const char* mac_cstr     = "89a58b47";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key     = make_sec_128_key(key_cstr);
+  security_direction dir     = static_cast<security_direction>(direction);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
 }
 
 /// 128-NIA3 Test Set 3
@@ -1219,20 +1591,49 @@ TEST(security_nia3_test, testset3)
   uint8_t     direction    = 1;
   uint32_t    length       = 577;
   const char* message_cstr = "983b41d47d780c9e1ad11d7eb70391b1de0b35da2dc62f83e7b78d6306ca0ea07e941b7be91348f9fcb170e22"
-                             "17fecd97f9f68adb16e5d7d21e569d280ed775cebde3f4093c5388100000000";
+                             "17fecd97f9f68adb16e5d7d21e569d280ed775cebde3f4093c5388100";
   const char* mac_cstr     = "fae8ff0b";
 
   // Pack hex strings into srsran types
   sec_128_key        key     = make_sec_128_key(key_cstr);
   security_direction dir     = static_cast<security_direction>(direction);
-  byte_buffer        message = make_byte_buffer(message_cstr);
-  byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mac_out = {};
   security_nia3(mac_out, key, count, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mac_out), mac_buf);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
+}
+
+/// 128-NIA3 Test Set 3 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.7, TS 35.223 (Document 3) Sec. 4,
+/// ETSI TC SAGE "Specification of the 3GPP Confidentiality and Integrity Algorithms 128-EEA3 & 128-EIA3
+/// Document 3: Implementor's Test Data - Sec. 5
+TEST(security_nia3_test, testset3_mod)
+{
+  // Testdata in plain format
+  const char* key_cstr     = "c9e6cec4607c72db000aefa88385ab0a";
+  uint32_t    count        = 0xa94059da;
+  uint8_t     bearer       = 0xa;
+  uint8_t     direction    = 1;
+  uint32_t    length       = 584;
+  const char* message_cstr = "983b41d47d780c9e1ad11d7eb70391b1de0b35da2dc62f83e7b78d6306ca0ea07e941b7be91348f9fcb170e22"
+                             "17fecd97f9f68adb16e5d7d21e569d280ed775cebde3f4093c5388100";
+  const char* mac_cstr     = "24a842b3";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key     = make_sec_128_key(key_cstr);
+  security_direction dir     = static_cast<security_direction>(direction);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
 }
 
 /// 128-NIA3 Test Set 4
@@ -1258,14 +1659,47 @@ TEST(security_nia3_test, testset4)
   // Pack hex strings into srsran types
   sec_128_key        key     = make_sec_128_key(key_cstr);
   security_direction dir     = static_cast<security_direction>(direction);
-  byte_buffer        message = make_byte_buffer(message_cstr);
-  byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mac_out = {};
   security_nia3(mac_out, key, count, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mac_out), mac_buf);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
+}
+
+/// 128-NIA3 Test Set 4 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.7, TS 35.223 (Document 3) Sec. 4,
+/// ETSI TC SAGE "Specification of the 3GPP Confidentiality and Integrity Algorithms 128-EEA3 & 128-EIA3
+/// Document 3: Implementor's Test Data - Sec. 5
+TEST(security_nia3_test, testset4_mod)
+{
+  // Testdata in plain format
+  const char* key_cstr  = "c8a48262d0c2e2bac4b96ef77e80ca59";
+  uint32_t    count     = 0x05097850;
+  uint8_t     bearer    = 0x10;
+  uint8_t     direction = 1;
+  uint32_t    length    = 2080;
+  const char* message_cstr =
+      "b546430bf87b4f1ee834704cd6951c36e26f108cf731788f48dc34f1678c05221c8fa7ff2f39f477e7e49ef60a4ec2c3de24312a96aa26e1"
+      "cfba57563838b297f47e8510c779fd6654b143386fa639d31edbd6c06e47d159d94362f26aeeedee0e4f49d9bf8412995415bfad56ee82d1"
+      "ca7463abf085b082b09904d6d990d43cf2e062f40839d93248b1eb92cdfed5300bc148280430b6d0caa094b6ec8911ab7dc36824b824dc0a"
+      "f6682b0935fde7b492a14dc2f43648038da2cf79170d2d50133fd49416cb6e33bea90b8bf4559b03732a01ea290e6d074f79bb83c10e5800"
+      "15cc1a85b36b5501046e9c4bdcae5135690b8666bd54b7a703ea7b6f220a5469a568027e";
+  const char* mac_cstr = "039532e1";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key     = make_sec_128_key(key_cstr);
+  security_direction dir     = static_cast<security_direction>(direction);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
 }
 
 /// 128-NIA3 Test Set 5
@@ -1293,20 +1727,61 @@ TEST(security_nia3_test, testset5)
       "350deb62a99fe03185eb4f69937ecd387941fda544ba67db0911774938b01827bcc69c92b3f772a9d2859ef003398b1f6bbad7b574f7989a"
       "1d10b2df798e0dbf30d6587464d24878cd00c0eaee8a1a0cc753a27979e11b41db1de3d5038afaf49f5c682c3748d8a3a9ec54e6a371275f"
       "1683510f8e4f90938f9ab6e134c2cfdf4841cba88e0cff2b0bcc8e6adcb71109b5198fecf1bb7e5c531aca50a56a8a3b6de59862d41fa113"
-      "d9cd957808f08571d9a4bb792af271f6cc6dbb8dc7ec36e36be1ed308164c31c7c0afc541c000000";
+      "d9cd957808f08571d9a4bb792af271f6cc6dbb8dc7ec36e36be1ed308164c31c7c0afc541c";
   const char* mac_cstr = "0ca12792";
 
   // Pack hex strings into srsran types
   sec_128_key        key     = make_sec_128_key(key_cstr);
   security_direction dir     = static_cast<security_direction>(direction);
-  byte_buffer        message = make_byte_buffer(message_cstr);
-  byte_buffer        mac_buf = make_byte_buffer(mac_cstr);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
 
   // Apply integrity check
   byte_buffer_view message_view{message};
   sec_mac          mac_out = {};
   security_nia3(mac_out, key, count, bearer, dir, message_view, length);
-  EXPECT_EQ(byte_buffer(mac_out), mac_buf);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
+}
+
+/// 128-NIA3 Test Set 5 (modified custom version of the test set expanded to next full byte)
+/// Ref: TS 33.501 Sec. D.4.7, TS 35.223 (Document 3) Sec. 4,
+/// ETSI TC SAGE "Specification of the 3GPP Confidentiality and Integrity Algorithms 128-EEA3 & 128-EIA3
+/// Document 3: Implementor's Test Data - Sec. 5
+TEST(security_nia3_test, testset5_mod)
+{
+  // Testdata in plain format
+  const char* key_cstr  = "6b8b08ee79e0b5982d6d128ea9f220cb";
+  uint32_t    count     = 0x561eb2dd;
+  uint8_t     bearer    = 0x1c;
+  uint8_t     direction = 0;
+  uint32_t    length    = 5672;
+  const char* message_cstr =
+      "5bad724710ba1c56d5a315f8d40f6e093780be8e8de07b6992432018e08ed96a5734af8bad8a575d3a1f162f85045cc770925571d9f5b94e"
+      "454a77c16e72936bf016ae157499f0543b5d52caa6dbeab697d2bb73e41b8075dce79b4b86044f661d4485a543dd78606e0419e8059859d3"
+      "cb2b67ce0977603f81ff839e331859544cfbc8d00fef1a4c8510fb547d6b06c611ef44f1bce107cfa45a06aab360152b28dc1ebe6f7fe09b"
+      "0516f9a5b02a1bd84bb0181e2e89e19bd8125930d178682f3862dc51b636f04e720c47c3ce51ad70d94b9b2255fbae906549f499f8c6d399"
+      "47ed5e5df8e2def113253e7b08d0a76b6bfc68c812f375c79b8fe5fd85976aa6d46b4a2339d8ae5147f680fbe70f978b38effd7b2f7866a2"
+      "2554e193a94e98a68b74bd25bb2b3f5fb0a5fd59887f9ab68159b7178d5b7b677cb546bf41eadca216fc10850128f8bdef5c8d89f96afa4f"
+      "a8b54885565ed838a950fee5f1c3b0a4f6fb71e54dfd169e82cecc7266c850e67c5ef0ba960f5214060e71eb172a75fc1486835cbea65344"
+      "65b055c96a72e4105224182325d830414b40214daa8091d2e0fb010ae15c6de90850973bdf1e423be148a237b87a0c9f34d4b47605b803d7"
+      "43a86a90399a4af396d3a1200a62f3d9507962e8e5bee6d3da2bb3f7237664ac7a292823900bc63503b29e80d63f6067bf8e1716ac25beba"
+      "350deb62a99fe03185eb4f69937ecd387941fda544ba67db0911774938b01827bcc69c92b3f772a9d2859ef003398b1f6bbad7b574f7989a"
+      "1d10b2df798e0dbf30d6587464d24878cd00c0eaee8a1a0cc753a27979e11b41db1de3d5038afaf49f5c682c3748d8a3a9ec54e6a371275f"
+      "1683510f8e4f90938f9ab6e134c2cfdf4841cba88e0cff2b0bcc8e6adcb71109b5198fecf1bb7e5c531aca50a56a8a3b6de59862d41fa113"
+      "d9cd957808f08571d9a4bb792af271f6cc6dbb8dc7ec36e36be1ed308164c31c7c0afc541c";
+  const char* mac_cstr = "fb9ab74c";
+
+  // Pack hex strings into srsran types
+  sec_128_key        key     = make_sec_128_key(key_cstr);
+  security_direction dir     = static_cast<security_direction>(direction);
+  byte_buffer        message = make_byte_buffer(message_cstr).value();
+  byte_buffer        mac_buf = make_byte_buffer(mac_cstr).value();
+
+  // Apply integrity check
+  byte_buffer_view message_view{message};
+  sec_mac          mac_out = {};
+  security_nia3(mac_out, key, count, bearer, dir, message_view, length);
+  EXPECT_EQ(byte_buffer::create(mac_out).value(), mac_buf);
 }
 
 /// Generation of k_rrc_end and k_rrc_int
@@ -1475,9 +1950,10 @@ TEST(short_mac, short_mac_valid)
   sec_config.integ_algo    = integrity_algorithm::nia2;
   sec_config.k_int         = make_sec_key(k_int_cstr);
 
-  sec_short_mac_i short_mac                  = {0xc2, 0x18};
-  byte_buffer     var_short_mac_input_packed = {0x00, 0x40, 0x00, 0x00, 0x00, 0x01, 0x18, 0x04};
-  bool            valid                      = verify_short_mac(short_mac, var_short_mac_input_packed, sec_config);
+  sec_short_mac_i short_mac = {0xc2, 0x18};
+  byte_buffer     var_short_mac_input_packed =
+      byte_buffer::create({0x00, 0x40, 0x00, 0x00, 0x00, 0x01, 0x18, 0x04}).value();
+  bool valid = verify_short_mac(short_mac, var_short_mac_input_packed, sec_config);
   ASSERT_EQ(true, valid);
 }
 

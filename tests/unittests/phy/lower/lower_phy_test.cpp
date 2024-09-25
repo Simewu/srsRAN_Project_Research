@@ -288,6 +288,7 @@ protected:
     config.rx_symbol_notifier          = &rx_symbol_notifier_spy;
     config.timing_notifier             = &timing_notifier_spy;
     config.error_notifier              = &error_notifier_spy;
+    config.metric_notifier             = &metrics_notifier_spy;
     config.tx_task_executor            = &tx_task_executor;
     config.rx_task_executor            = &rx_task_executor;
     config.dl_task_executor            = &dl_task_executor;
@@ -379,6 +380,7 @@ protected:
   lower_phy_rx_symbol_notifier_spy        rx_symbol_notifier_spy;
   lower_phy_timing_notifier_spy           timing_notifier_spy;
   lower_phy_error_notifier_spy            error_notifier_spy;
+  lower_phy_metrics_notifier_spy          metrics_notifier_spy;
   manual_task_worker_always_enqueue_tasks tx_task_executor;
   manual_task_worker_always_enqueue_tasks rx_task_executor;
   manual_task_worker_always_enqueue_tasks dl_task_executor;
@@ -639,13 +641,16 @@ TEST_P(LowerPhyFixture, RxSymbolNotifiers)
     context.sector      = sector_id_dist(rgen);
     context.slot        = slot_point(to_numerology_value(scs), slot_dist(rgen));
     context.nof_symbols = 123;
-    resource_grid_reader_spy rg_spy;
-    puxch_notifier->on_rx_symbol(rg_spy, context);
+    resource_grid_reader_spy rg_reader_spy;
+    resource_grid_writer_spy rg_writer_spy;
+    resource_grid_spy        rg_spy(rg_reader_spy, rg_writer_spy);
+    shared_resource_grid_spy shared_rg(rg_spy);
+    puxch_notifier->on_rx_symbol(shared_rg.get_grid(), context);
     auto& entries = rx_symbol_notifier_spy.get_rx_symbol_events();
     ASSERT_EQ(entries.size(), 1);
     ASSERT_EQ(context, entries.back().context);
-    ASSERT_EQ(&rg_spy, entries.back().grid);
-    ASSERT_EQ(rg_spy.get_count(), 0);
+    ASSERT_EQ(&rg_reader_spy, entries.back().grid);
+    ASSERT_EQ(rg_reader_spy.get_count(), 0);
   }
 
   // Assert only two error events.
@@ -667,18 +672,23 @@ TEST_P(LowerPhyFixture, RgHandler)
   context.slot   = slot_point(to_numerology_value(scs), slot_dist(rgen));
 
   // Prepare RG spy.
-  resource_grid_reader_spy rg_spy;
+  resource_grid_reader_spy rg_reader_spy;
+  resource_grid_writer_spy rg_writer_spy;
+  resource_grid_spy        rg_spy(rg_reader_spy, rg_writer_spy);
+  shared_resource_grid_spy unique_rg_spy(rg_spy);
 
   // Handle RG.
-  rg_handler.handle_resource_grid(context, rg_spy);
+  rg_handler.handle_resource_grid(context, unique_rg_spy.get_grid());
 
   // Assert RG.
   auto& pdxch_entries = pdxch_proc_spy.get_entries();
   ASSERT_EQ(pdxch_entries.size(), 1);
   auto& pdxch_entry = pdxch_entries.back();
   ASSERT_EQ(pdxch_entry.context, context);
-  ASSERT_EQ(pdxch_entry.grid, &rg_spy);
-  ASSERT_EQ(rg_spy.get_count(), 0);
+  ASSERT_EQ(pdxch_entry.grid, &rg_reader_spy);
+  ASSERT_EQ(rg_reader_spy.get_count(), 0);
+  ASSERT_EQ(rg_writer_spy.get_count(), 0);
+  ASSERT_EQ(rg_spy.get_all_zero_count(), 0);
 }
 
 TEST_P(LowerPhyFixture, PrachRequestHandler)
@@ -732,10 +742,13 @@ TEST_P(LowerPhyFixture, PuxchRequestHandler)
   context.slot   = slot_point(to_numerology_value(scs), slot_dist(rgen));
 
   // Prepare RG spy.
-  resource_grid_spy rg_spy;
+  resource_grid_reader_spy rg_reader_spy;
+  resource_grid_writer_spy rg_writer_spy;
+  resource_grid_spy        rg_spy(rg_reader_spy, rg_writer_spy);
+  shared_resource_grid_spy unique_rg_spy(rg_spy);
 
   // Request RG.
-  request_handler.request_uplink_slot(context, rg_spy);
+  request_handler.request_uplink_slot(context, unique_rg_spy.get_grid());
 
   // Assert context and RG.
   auto& puxch_entries = puxch_proc_spy.get_entries();
@@ -745,7 +758,9 @@ TEST_P(LowerPhyFixture, PuxchRequestHandler)
   ASSERT_EQ(puxch_entry.grid, &rg_spy);
 
   // No method of the grid should have been called.
-  ASSERT_EQ(rg_spy.get_total_count(), 0);
+  ASSERT_EQ(rg_reader_spy.get_count(), 0);
+  ASSERT_EQ(rg_writer_spy.get_count(), 0);
+  ASSERT_EQ(rg_spy.get_all_zero_count(), 0);
 }
 
 TEST_P(LowerPhyFixture, BasebandDownlinkFlow)

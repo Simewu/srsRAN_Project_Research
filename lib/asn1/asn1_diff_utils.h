@@ -30,8 +30,8 @@
 #pragma once
 
 #include "srsran/support/async/detail/function_signature.h"
-#include "srsran/support/detail/is_iterable.h"
 #include "srsran/support/srsran_assert.h"
+#include "srsran/support/type_traits.h"
 #include <algorithm>
 
 namespace srsran {
@@ -133,12 +133,12 @@ void apply_addmodremlist_diff(AddModList&       src_and_dest_list,
 /// \param[in] next_list Next list of objects.
 /// \param[in] id_func function to extract the ID from an object with type equal to the value_type of \c List.
 template <typename List, typename RemFunctor, typename AddFunctor, typename ModFunctor, typename GetId>
-std::enable_if_t<not is_iterable<AddFunctor>::value> calculate_addmodremlist_diff(const RemFunctor& rem_func,
-                                                                                  const AddFunctor& add_func,
-                                                                                  const ModFunctor& mod_func,
-                                                                                  const List&       prev_list,
-                                                                                  const List&       next_list,
-                                                                                  const GetId&      id_func)
+std::enable_if_t<not is_iterable<AddFunctor>> calculate_addmodremlist_diff(const RemFunctor& rem_func,
+                                                                           const AddFunctor& add_func,
+                                                                           const ModFunctor& mod_func,
+                                                                           const List&       prev_list,
+                                                                           const List&       next_list,
+                                                                           const GetId&      id_func)
 {
   auto id_cmp_op = make_id_comparator(id_func);
   srsran_sanity_check(std::is_sorted(prev_list.begin(), prev_list.end(), id_cmp_op), "Expected sorted list");
@@ -177,12 +177,12 @@ std::enable_if_t<not is_iterable<AddFunctor>::value> calculate_addmodremlist_dif
 /// \c toAddModList::value_type.
 /// \param[in] id_func function to extract the ID from an object with type equal to the value_type of \c List.
 template <typename List, typename toAddModList, typename RemoveList, typename ConvertElem, typename GetId>
-std::enable_if_t<is_iterable<toAddModList>::value> calculate_addmodremlist_diff(toAddModList&      add_diff_list,
-                                                                                RemoveList&        rem_diff_list,
-                                                                                const List&        prev_list,
-                                                                                const List&        next_list,
-                                                                                const ConvertElem& convert_func,
-                                                                                const GetId&       id_func)
+std::enable_if_t<is_iterable<toAddModList>> calculate_addmodremlist_diff(toAddModList&      add_diff_list,
+                                                                         RemoveList&        rem_diff_list,
+                                                                         const List&        prev_list,
+                                                                         const List&        next_list,
+                                                                         const ConvertElem& convert_func,
+                                                                         const GetId&       id_func)
 {
   if (&prev_list == &next_list) {
     // No difference because src and target are the same list. Early return.
@@ -249,10 +249,10 @@ void calculate_addmodremlist_diff(toAddModList&       add_diff_list,
 /// \tparam ConvertElem Function to convert element of \c OptionalElem to element of \c Asn1Type.
 /// \return Whether changes were made to Setup/Release ASN.1 object.
 template <typename Asn1Type, typename OptionalElem, typename ConvertElem>
-bool calculate_setup_release(asn1::setup_release_c<Asn1Type>& setup_rel,
-                             const optional<OptionalElem>&    prev,
-                             const optional<OptionalElem>&    next,
-                             const ConvertElem&               convert_func)
+bool calculate_setup_release(asn1::setup_release_c<Asn1Type>&   setup_rel,
+                             const std::optional<OptionalElem>& prev,
+                             const std::optional<OptionalElem>& next,
+                             const ConvertElem&                 convert_func)
 {
   if (next.has_value()) {
     if (not prev.has_value() or *prev != *next) {

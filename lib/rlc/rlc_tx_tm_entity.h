@@ -37,8 +37,6 @@ private:
   rlc_sdu_queue_lockfree sdu_queue;
   rlc_sdu                sdu;
 
-  task_executor& pcell_executor;
-
   pcap_rlc_pdu_context pcap_context;
 
   /// This atomic_flag indicates whether a buffer state update task has been queued but not yet run by pcell_executor.
@@ -48,19 +46,33 @@ private:
   std::atomic_flag pending_buffer_state = ATOMIC_FLAG_INIT;
 
 public:
-  rlc_tx_tm_entity(uint32_t                             du_index,
+  rlc_tx_tm_entity(gnb_du_id_t                          du_id,
                    du_ue_index_t                        ue_index,
-                   rb_id_t                              rb_id,
+                   rb_id_t                              rb_id_,
                    const rlc_tx_tm_config&              config,
                    rlc_tx_upper_layer_data_notifier&    upper_dn_,
                    rlc_tx_upper_layer_control_notifier& upper_cn_,
                    rlc_tx_lower_layer_notifier&         lower_dn_,
+                   rlc_metrics_aggregator&              metrics_agg_,
+                   rlc_pcap&                            pcap_,
                    task_executor&                       pcell_executor_,
-                   bool                                 metrics_enabled_,
-                   rlc_pcap&                            pcap_);
+                   task_executor&                       ue_executor_,
+                   timer_manager&                       timers);
+
+  ~rlc_tx_tm_entity() override { stop(); }
+
+  void stop() final
+  {
+    // Stop all timers. Any queued handlers of timers that just expired before this call are canceled automatically
+    if (not stopped) {
+      high_metrics_timer.stop();
+      low_metrics_timer.stop();
+      stopped = true;
+    }
+  }
 
   // Interfaces for higher layers
-  void handle_sdu(rlc_sdu sdu) override;
+  void handle_sdu(byte_buffer sdu_buf, bool is_retx) override;
   void discard_sdu(uint32_t pdcp_sn) override;
 
   // Interfaces for lower layers
@@ -82,6 +94,8 @@ private:
   ///
   /// Safe execution from: pcell_executor
   void update_mac_buffer_state();
+
+  bool stopped = false;
 };
 
 } // namespace srsran

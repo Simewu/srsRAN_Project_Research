@@ -22,11 +22,11 @@
 
 #pragma once
 
-#include "srsran/adt/optional.h"
 #include "srsran/adt/slotted_array.h"
 #include "srsran/ran/pci.h"
 #include "srsran/ran/subcarrier_spacing.h"
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace srsran {
@@ -87,17 +87,24 @@ inline report_cfg_id_t uint_to_report_cfg_id(uint8_t id)
 }
 
 struct rrc_periodicity_and_offset {
-  optional<uint8_t> sf5;
-  optional<uint8_t> sf10;
-  optional<uint8_t> sf20;
-  optional<uint8_t> sf40;
-  optional<uint8_t> sf80;
-  optional<uint8_t> sf160;
+  enum class periodicity_t : uint8_t { sf5 = 5, sf10 = 10, sf20 = 20, sf40 = 40, sf80 = 80, sf160 = 160 };
+  periodicity_t periodicity;
+  uint8_t       offset;
+};
+
+inline bool operator==(const rrc_periodicity_and_offset& lhs, const rrc_periodicity_and_offset& rhs)
+{
+  return lhs.periodicity == rhs.periodicity && lhs.offset == rhs.offset;
 };
 
 struct rrc_ssb_mtc {
   rrc_periodicity_and_offset periodicity_and_offset;
   uint8_t                    dur;
+};
+
+inline bool operator==(const rrc_ssb_mtc& lhs, const rrc_ssb_mtc& rhs)
+{
+  return lhs.periodicity_and_offset == rhs.periodicity_and_offset && lhs.dur == rhs.dur;
 };
 
 struct rrc_ss_rssi_meas {
@@ -107,13 +114,13 @@ struct rrc_ss_rssi_meas {
 
 struct rrc_meas_timing {
   struct rrc_freq_and_timing_ {
-    uint32_t                   carrier_freq;
-    subcarrier_spacing         ssb_subcarrier_spacing;
-    rrc_ssb_mtc                ssb_meas_timing_cfg;
-    optional<rrc_ss_rssi_meas> ss_rssi_meas;
+    uint32_t                        carrier_freq;
+    subcarrier_spacing              ssb_subcarrier_spacing;
+    rrc_ssb_mtc                     ssb_meas_timing_cfg;
+    std::optional<rrc_ss_rssi_meas> ss_rssi_meas;
   };
 
-  optional<rrc_freq_and_timing_> freq_and_timing;
+  std::optional<rrc_freq_and_timing_> freq_and_timing;
 };
 
 struct rrc_ssb_mtc2 {
@@ -121,21 +128,29 @@ struct rrc_ssb_mtc2 {
   uint8_t            periodicity;
 };
 
+inline bool operator==(const rrc_ssb_mtc2& lhs, const rrc_ssb_mtc2& rhs)
+{
+  return lhs.periodicity == rhs.periodicity && lhs.pci_list == rhs.pci_list;
+};
+
 struct rrc_ssb_to_measure {
-  optional<uint8_t>  short_bitmap;
-  optional<uint8_t>  medium_bitmap;
-  optional<uint64_t> long_bitmap;
+  enum class bitmap_type_t : uint8_t { /* uint8_t */ short_bitmap,
+                                       /* uint8_t */ medium_bitmap,
+                                       /* uint64_t */ long_bitmap };
+
+  bitmap_type_t type;
+  uint64_t      bitmap;
 };
 
 struct rrc_ssb_to_measure_setup_release {
-  bool                         is_release;
-  optional<rrc_ssb_to_measure> setup;
+  bool                              is_release;
+  std::optional<rrc_ssb_to_measure> setup;
 };
 
 struct rrc_ssb_cfg_mob {
-  optional<rrc_ssb_to_measure_setup_release> ssb_to_measure;
-  bool                                       derive_ssb_idx_from_cell;
-  optional<rrc_ss_rssi_meas>                 ss_rssi_meas;
+  std::optional<rrc_ssb_to_measure_setup_release> ssb_to_measure;
+  bool                                            derive_ssb_idx_from_cell;
+  std::optional<rrc_ss_rssi_meas>                 ss_rssi_meas;
 };
 
 struct rrc_csi_rs_meas_bw {
@@ -144,11 +159,10 @@ struct rrc_csi_rs_meas_bw {
 };
 
 struct rrc_slot_cfg {
-  optional<uint8_t>  ms4;
-  optional<uint8_t>  ms5;
-  optional<uint8_t>  ms10;
-  optional<uint8_t>  ms20;
-  optional<uint16_t> ms40;
+  enum class period_t : uint8_t { ms4, ms5, ms10, ms20, ms40 };
+
+  period_t period;
+  uint16_t offset;
 };
 
 struct rrc_associated_ssb {
@@ -156,24 +170,24 @@ struct rrc_associated_ssb {
   bool    is_quasi_colocated;
 };
 
-struct rrc_freq_domain_alloc {
-  optional<uint8_t>  row1;
-  optional<uint16_t> row2;
-};
+using rrc_freq_domain_alloc_row1 = uint8_t;
+using rrc_freq_domain_alloc_row2 = uint16_t;
+
+using rrc_freq_domain_alloc = std::variant<rrc_freq_domain_alloc_row1, rrc_freq_domain_alloc_row2>;
 
 struct rrc_csi_rs_res_mob {
-  uint8_t                      csi_rs_idx;
-  rrc_slot_cfg                 slot_cfg;
-  optional<rrc_associated_ssb> associated_ssb;
-  rrc_freq_domain_alloc        freq_domain_alloc;
-  uint8_t                      first_ofdm_symbol_in_time_domain;
-  uint16_t                     seq_generation_cfg;
+  uint8_t                           csi_rs_idx;
+  rrc_slot_cfg                      slot_cfg;
+  std::optional<rrc_associated_ssb> associated_ssb;
+  rrc_freq_domain_alloc             freq_domain_alloc;
+  uint8_t                           first_ofdm_symbol_in_time_domain;
+  uint16_t                          seq_generation_cfg;
 };
 
 struct rrc_csi_rs_cell_mob {
   uint16_t                        cell_id;
   rrc_csi_rs_meas_bw              csi_rs_meas_bw;
-  optional<uint8_t>               density;
+  std::optional<uint8_t>          density;
   std::vector<rrc_csi_rs_res_mob> csi_rs_res_list_mob;
 };
 
@@ -183,28 +197,28 @@ struct rrc_csi_rs_res_cfg_mob {
 };
 
 struct rrc_csi_rs_res_cfg_mob_setup_release {
-  bool                             is_release;
-  optional<rrc_csi_rs_res_cfg_mob> setup;
+  bool                                  is_release;
+  std::optional<rrc_csi_rs_res_cfg_mob> setup;
 };
 
 struct rrc_ref_sig_cfg {
-  optional<rrc_ssb_cfg_mob>                      ssb_cfg_mob;
-  optional<rrc_csi_rs_res_cfg_mob_setup_release> csi_rs_res_cfg_mob;
+  std::optional<rrc_ssb_cfg_mob>                      ssb_cfg_mob;
+  std::optional<rrc_csi_rs_res_cfg_mob_setup_release> csi_rs_res_cfg_mob;
 };
 
 struct rrc_thres_nr {
-  optional<uint8_t> thres_rsrp;
-  optional<uint8_t> thres_rsrq;
-  optional<uint8_t> thres_sinr;
+  std::optional<uint8_t> thres_rsrp;
+  std::optional<uint8_t> thres_rsrq;
+  std::optional<uint8_t> thres_sinr;
 };
 
 struct rrc_q_offset_range_list {
-  optional<int8_t> rsrp_offset_ssb;
-  optional<int8_t> rsrq_offset_ssb;
-  optional<int8_t> sinr_offset_ssb;
-  optional<int8_t> rsrp_offset_csi_rs;
-  optional<int8_t> rsrq_offset_csi_rs;
-  optional<int8_t> sinr_offset_csi_rs;
+  std::optional<int8_t> rsrp_offset_ssb;
+  std::optional<int8_t> rsrq_offset_ssb;
+  std::optional<int8_t> sinr_offset_ssb;
+  std::optional<int8_t> rsrp_offset_csi_rs;
+  std::optional<int8_t> rsrq_offset_csi_rs;
+  std::optional<int8_t> sinr_offset_csi_rs;
 };
 
 struct rrc_cells_to_add_mod {
@@ -213,8 +227,8 @@ struct rrc_cells_to_add_mod {
 };
 
 struct rrc_pci_range {
-  uint16_t           start;
-  optional<uint16_t> range;
+  uint16_t                start;
+  std::optional<uint16_t> range;
 };
 
 struct rrc_pci_range_elem {
@@ -222,17 +236,19 @@ struct rrc_pci_range_elem {
   rrc_pci_range pci_range;
 };
 
+using ssb_frequency_t = uint32_t;
+
 struct rrc_meas_obj_nr {
-  optional<uint32_t>                ssb_freq;
-  optional<subcarrier_spacing>      ssb_subcarrier_spacing;
-  optional<rrc_ssb_mtc>             smtc1;
-  optional<rrc_ssb_mtc2>            smtc2;
-  optional<uint32_t>                ref_freq_csi_rs;
+  std::optional<ssb_frequency_t>    ssb_freq; // SSB ARFCN value
+  std::optional<subcarrier_spacing> ssb_subcarrier_spacing;
+  std::optional<rrc_ssb_mtc>        smtc1;
+  std::optional<rrc_ssb_mtc2>       smtc2;
+  std::optional<uint32_t>           ref_freq_csi_rs;
   rrc_ref_sig_cfg                   ref_sig_cfg;
-  optional<rrc_thres_nr>            abs_thresh_ss_blocks_consolidation;
-  optional<rrc_thres_nr>            abs_thresh_csi_rs_consolidation;
-  optional<uint8_t>                 nrof_ss_blocks_to_average;
-  optional<uint8_t>                 nrof_csi_rs_res_to_average;
+  std::optional<rrc_thres_nr>       abs_thresh_ss_blocks_consolidation;
+  std::optional<rrc_thres_nr>       abs_thresh_csi_rs_consolidation;
+  std::optional<uint8_t>            nrof_ss_blocks_to_average;
+  std::optional<uint8_t>            nrof_csi_rs_res_to_average;
   uint8_t                           quant_cfg_idx;
   rrc_q_offset_range_list           offset_mo;
   std::vector<pci_t>                cells_to_rem_list; // max size = 32
@@ -242,8 +258,8 @@ struct rrc_meas_obj_nr {
   std::vector<uint8_t>              allowed_cells_to_rem_list; // max size = 8
   std::vector<rrc_pci_range_elem>   allowed_cells_to_add_mod_list;
   // group 0
-  optional<uint16_t> freq_band_ind_nr;
-  optional<uint16_t> meas_cycle_scell;
+  std::optional<uint16_t> freq_band_ind_nr;
+  std::optional<uint16_t> meas_cycle_scell;
 };
 
 struct rrc_n2 {
@@ -256,10 +272,7 @@ struct rrc_n4 {
   uint8_t cyclic_shift_n4;
 };
 
-struct rrc_tx_comb {
-  optional<rrc_n2> n2;
-  optional<rrc_n4> n4;
-};
+using rrc_tx_comb = std::variant<rrc_n2, rrc_n4>;
 
 struct rrc_res_map {
   uint8_t start_position;
@@ -274,34 +287,39 @@ struct rrc_freq_hop {
 };
 
 struct rrc_srs_periodicity_and_offset {
-  bool               is_sl1;
-  optional<uint8_t>  sl2;
-  optional<uint8_t>  sl4;
-  optional<uint8_t>  sl5;
-  optional<uint8_t>  sl8;
-  optional<uint8_t>  sl10;
-  optional<uint8_t>  sl16;
-  optional<uint8_t>  sl20;
-  optional<uint8_t>  sl32;
-  optional<uint8_t>  sl40;
-  optional<uint8_t>  sl64;
-  optional<uint8_t>  sl80;
-  optional<uint8_t>  sl160;
-  optional<uint16_t> sl320;
-  optional<uint16_t> sl640;
-  optional<uint16_t> sl1280;
-  optional<uint16_t> sl2560;
+  enum class period_t : uint16_t {
+    ms1,
+    ms2,
+    ms4,
+    ms5,
+    ms8,
+    ms10,
+    ms16,
+    ms20,
+    ms32,
+    ms40,
+    ms64,
+    ms80,
+    ms160,
+    ms320,
+    ms640,
+    ms1280,
+    ms2560
+  };
+
+  period_t period;
+  uint16_t offset;
 };
 
-struct rrc_semi_persistent_periodic {
+struct rrc_periodic {
   rrc_srs_periodicity_and_offset periodicity_and_offset_sp_p;
 };
 
-struct rrc_res_type {
-  bool                                   is_aperiodic;
-  optional<rrc_semi_persistent_periodic> semi_persistent;
-  optional<rrc_semi_persistent_periodic> periodic;
+struct rrc_semi_persistent {
+  rrc_srs_periodicity_and_offset periodicity_and_offset_sp_p;
 };
+
+using rrc_res_type = std::variant<bool, rrc_semi_persistent, rrc_periodic>;
 
 struct rrc_srs {
   uint8_t res_id;
@@ -309,34 +327,33 @@ struct rrc_srs {
 };
 
 struct rrc_srs_spatial_relation_info {
-  struct rrc_ref_sig_ {
-    optional<uint8_t> ssb_idx;
-    optional<uint8_t> csi_rs_idx;
-    optional<rrc_srs> srs;
-  };
+  enum class ssb_idx_t : uint8_t;
+  enum class csi_rs_idx_t : uint8_t;
 
-  optional<uint8_t> serving_cell_id;
-  rrc_ref_sig_      ref_sig;
+  using rrc_ref_sig_ = std::variant<ssb_idx_t, csi_rs_idx_t, rrc_srs>;
+
+  std::optional<uint8_t> serving_cell_id;
+  rrc_ref_sig_           ref_sig;
 };
 
 struct rrc_srs_res {
-  uint8_t                                 srs_res_id;
-  uint8_t                                 nrof_srs_ports;
-  optional<uint8_t>                       ptrs_port_idx;
-  rrc_tx_comb                             tx_comb;
-  rrc_res_map                             res_map;
-  uint8_t                                 freq_domain_position;
-  uint16_t                                freq_domain_shift;
-  rrc_freq_hop                            freq_hop;
-  std::string                             group_or_seq_hop;
-  rrc_res_type                            res_type;
-  uint16_t                                seq_id;
-  optional<rrc_srs_spatial_relation_info> spatial_relation_info;
+  uint8_t                                      srs_res_id;
+  uint8_t                                      nrof_srs_ports;
+  std::optional<uint8_t>                       ptrs_port_idx;
+  rrc_tx_comb                                  tx_comb;
+  rrc_res_map                                  res_map;
+  uint8_t                                      freq_domain_position;
+  uint16_t                                     freq_domain_shift;
+  rrc_freq_hop                                 freq_hop;
+  std::string                                  group_or_seq_hop;
+  rrc_res_type                                 res_type;
+  uint16_t                                     seq_id;
+  std::optional<rrc_srs_spatial_relation_info> spatial_relation_info;
 };
 
 struct rrc_meas_obj_to_add_mod {
-  meas_obj_id_t             meas_obj_id;
-  optional<rrc_meas_obj_nr> meas_obj_nr;
+  meas_obj_id_t                  meas_obj_id;
+  std::optional<rrc_meas_obj_nr> meas_obj_nr;
 };
 
 enum class rrc_nr_rs_type { ssb = 0, csi_rs };
@@ -348,92 +365,55 @@ struct rrc_meas_report_quant {
 };
 
 struct rrc_periodical_report_cfg {
-  rrc_nr_rs_type                  rs_type;
-  uint16_t                        report_interv;
-  int8_t                          report_amount;
-  rrc_meas_report_quant           report_quant_cell;
-  uint8_t                         max_report_cells;
-  optional<rrc_meas_report_quant> report_quant_rs_idxes;
-  optional<uint8_t>               max_nrof_rs_idxes_to_report;
-  bool                            include_beam_meass;
-  bool                            use_allowed_cell_list;
+  rrc_nr_rs_type                       rs_type;
+  uint32_t                             report_interv;
+  int8_t                               report_amount;
+  rrc_meas_report_quant                report_quant_cell;
+  uint8_t                              max_report_cells;
+  std::optional<rrc_meas_report_quant> report_quant_rs_idxes;
+  std::optional<uint8_t>               max_nrof_rs_idxes_to_report;
+  bool                                 include_beam_meass;
+  bool                                 use_allowed_cell_list;
 };
 
 struct rrc_meas_trigger_quant {
-  optional<uint8_t> rsrp;
-  optional<uint8_t> rsrq;
-  optional<uint8_t> sinr;
-};
-
-struct rrc_event_a1 {
-  rrc_meas_trigger_quant a1_thres;
-  bool                   report_on_leave;
-  uint8_t                hysteresis;
-  uint16_t               time_to_trigger;
-};
-
-struct rrc_event_a2 {
-  rrc_meas_trigger_quant a2_thres;
-  bool                   report_on_leave;
-  uint8_t                hysteresis;
-  uint16_t               time_to_trigger;
+  std::optional<uint8_t> rsrp;
+  std::optional<uint8_t> rsrq;
+  std::optional<uint8_t> sinr;
 };
 
 using rrc_meas_trigger_quant_offset = rrc_meas_trigger_quant;
 
-struct rrc_event_a3 {
-  rrc_meas_trigger_quant_offset a3_offset;
-  bool                          report_on_leave;
-  uint8_t                       hysteresis;
-  uint16_t                      time_to_trigger;
-  bool                          use_allowed_cell_list;
-};
-
-struct rrc_event_a4 {
-  rrc_meas_trigger_quant a4_thres;
-  bool                   report_on_leave;
-  uint8_t                hysteresis;
-  uint16_t               time_to_trigger;
-  bool                   use_allowed_cell_list;
-};
-
-struct rrc_event_a5 {
-  rrc_meas_trigger_quant a5_thres_1;
-  rrc_meas_trigger_quant a5_thres_2;
-  bool                   report_on_leave;
-  uint8_t                hysteresis;
-  uint16_t               time_to_trigger;
-  bool                   use_allowed_cell_list;
-};
-
-struct rrc_event_a6 {
-  rrc_meas_trigger_quant_offset a6_offset;
-  bool                          report_on_leave;
-  uint8_t                       hysteresis;
-  uint16_t                      time_to_trigger;
-  bool                          use_allowed_cell_list;
-};
-
 struct rrc_event_id {
-  optional<rrc_event_a1> event_a1;
-  optional<rrc_event_a2> event_a2;
-  optional<rrc_event_a3> event_a3;
-  optional<rrc_event_a4> event_a4;
-  optional<rrc_event_a5> event_a5;
-  optional<rrc_event_a6> event_a6;
+  enum class event_id_t : uint8_t { a1, a2, a3, a4, a5, a6 };
+  // common parameters
+  event_id_t id;
+
+  bool     report_on_leave;
+  uint8_t  hysteresis;
+  uint16_t time_to_trigger;
+
+  // event A1/A2/A4/A5
+  std::optional<rrc_meas_trigger_quant>
+      meas_trigger_quant_thres_or_offset; ///< Threshold for the measurement trigger quantity of event A1/A2/A4/A5 or
+                                          ///< offset for event A3/A6
+  std::optional<rrc_meas_trigger_quant>
+      meas_trigger_quant_thres_2; ///< Threshold 2 for the measurement trigger quantity of event A5
+
+  std::optional<bool> use_allowed_cell_list; ///< For event A3/A4/A5/A6
 };
 
 struct rrc_event_trigger_cfg {
-  bool                            report_add_neigh_meas_present;
-  rrc_event_id                    event_id;
-  rrc_nr_rs_type                  rs_type;
-  uint16_t                        report_interv;
-  int8_t                          report_amount;
-  rrc_meas_report_quant           report_quant_cell;
-  uint8_t                         max_report_cells;
-  optional<rrc_meas_report_quant> report_quant_rs_idxes;
-  optional<uint8_t>               max_nrof_rs_idxes_to_report;
-  bool                            include_beam_meass;
+  bool                                 report_add_neigh_meas_present;
+  rrc_event_id                         event_id;
+  rrc_nr_rs_type                       rs_type;
+  uint16_t                             report_interv;
+  int8_t                               report_amount;
+  rrc_meas_report_quant                report_quant_cell;
+  uint8_t                              max_report_cells;
+  std::optional<rrc_meas_report_quant> report_quant_rs_idxes;
+  std::optional<uint8_t>               max_nrof_rs_idxes_to_report;
+  bool                                 include_beam_meass;
 };
 
 struct rrc_report_cgi {
@@ -458,13 +438,8 @@ struct rrc_cond_event_a5 {
   uint16_t               time_to_trigger;
 };
 
-struct rrc_report_cfg_nr {
-  // choice
-  optional<rrc_periodical_report_cfg> periodical;
-  optional<rrc_event_trigger_cfg>     event_triggered;
-  optional<rrc_report_cgi>            report_cgi;
-  optional<rrc_report_sftd_nr>        report_sftd;
-};
+using rrc_report_cfg_nr =
+    std::variant<rrc_periodical_report_cfg, rrc_event_trigger_cfg, rrc_report_cgi, rrc_report_sftd_nr>;
 
 struct rrc_report_cfg_to_add_mod {
   report_cfg_id_t   report_cfg_id;
@@ -478,14 +453,16 @@ struct rrc_meas_id_to_add_mod {
 };
 
 struct rrc_s_measure_cfg {
-  optional<uint8_t> ssb_rsrp;
-  optional<uint8_t> csi_rsrp;
+  enum class measure_type_t : uint8_t { ssb_rsrp, csi_rsrp };
+
+  measure_type_t type;
+  uint8_t        measure_config;
 };
 
 struct rrc_filt_cfg {
-  optional<uint8_t> filt_coef_rsrp;
-  optional<uint8_t> filt_coef_rsrq;
-  optional<uint8_t> filt_coef_rs_sinr;
+  std::optional<uint8_t> filt_coef_rsrp;
+  std::optional<uint8_t> filt_coef_rsrq;
+  std::optional<uint8_t> filt_coef_rs_sinr;
 };
 
 struct rrc_quant_cfg_rs {
@@ -494,8 +471,8 @@ struct rrc_quant_cfg_rs {
 };
 
 struct rrc_quant_cfg_nr {
-  rrc_quant_cfg_rs           quant_cfg_cell;
-  optional<rrc_quant_cfg_rs> quant_cfg_rs_idx;
+  rrc_quant_cfg_rs                quant_cfg_cell;
+  std::optional<rrc_quant_cfg_rs> quant_cfg_rs_idx;
 };
 
 struct rrc_quant_cfg {
@@ -510,56 +487,56 @@ struct rrc_gap_cfg {
 };
 
 struct rrc_gap_cfg_setup_release {
-  bool                  is_release;
-  optional<rrc_gap_cfg> setup;
+  bool                       is_release;
+  std::optional<rrc_gap_cfg> setup;
 };
 
 struct rrc_measg_gap_cfg {
-  optional<rrc_gap_cfg_setup_release> gap_fr2;
+  std::optional<rrc_gap_cfg_setup_release> gap_fr2;
 };
 
 struct rrc_meas_gap_sharing_scheme_setup_release {
-  bool                  is_release;
-  optional<std::string> setup;
+  bool                       is_release;
+  std::optional<std::string> setup;
 };
 
 struct rrc_meas_gap_sharing_cfg {
-  optional<rrc_meas_gap_sharing_scheme_setup_release> gap_sharing_fr2;
+  std::optional<rrc_meas_gap_sharing_scheme_setup_release> gap_sharing_fr2;
 };
 
 struct rrc_meas_cfg {
-  std::vector<meas_obj_id_t>             meas_obj_to_rem_list;
-  std::vector<rrc_meas_obj_to_add_mod>   meas_obj_to_add_mod_list;
-  std::vector<report_cfg_id_t>           report_cfg_to_rem_list;
-  std::vector<rrc_report_cfg_to_add_mod> report_cfg_to_add_mod_list;
-  std::vector<meas_id_t>                 meas_id_to_rem_list;
-  std::vector<rrc_meas_id_to_add_mod>    meas_id_to_add_mod_list;
-  optional<rrc_s_measure_cfg>            s_measure_cfg;
-  optional<rrc_quant_cfg>                quant_cfg;
-  optional<rrc_measg_gap_cfg>            meas_gap_cfg;
-  optional<rrc_meas_gap_sharing_cfg>     meas_gap_sharing_cfg;
+  std::vector<meas_obj_id_t>              meas_obj_to_rem_list;
+  std::vector<rrc_meas_obj_to_add_mod>    meas_obj_to_add_mod_list;
+  std::vector<report_cfg_id_t>            report_cfg_to_rem_list;
+  std::vector<rrc_report_cfg_to_add_mod>  report_cfg_to_add_mod_list;
+  std::vector<meas_id_t>                  meas_id_to_rem_list;
+  std::vector<rrc_meas_id_to_add_mod>     meas_id_to_add_mod_list;
+  std::optional<rrc_s_measure_cfg>        s_measure_cfg;
+  std::optional<rrc_quant_cfg>            quant_cfg;
+  std::optional<rrc_measg_gap_cfg>        meas_gap_cfg;
+  std::optional<rrc_meas_gap_sharing_cfg> meas_gap_sharing_cfg;
 };
 
 struct rrc_meas_quant_results {
-  optional<uint8_t> rsrp;
-  optional<uint8_t> rsrq;
-  optional<uint8_t> sinr;
+  std::optional<uint8_t> rsrp;
+  std::optional<uint8_t> rsrq;
+  std::optional<uint8_t> sinr;
 };
 
 struct rrc_results_per_ssb_idx {
-  uint8_t                          ssb_idx;
-  optional<rrc_meas_quant_results> ssb_results;
+  uint8_t                               ssb_idx;
+  std::optional<rrc_meas_quant_results> ssb_results;
 };
 
 struct rrc_results_per_csi_rs_idx {
-  uint8_t                          csi_rs_idx;
-  optional<rrc_meas_quant_results> csi_rs_results;
+  uint8_t                               csi_rs_idx;
+  std::optional<rrc_meas_quant_results> csi_rs_results;
 };
 
 struct rrc_meas_result_nr {
   struct cell_results_ {
-    optional<rrc_meas_quant_results> results_ssb_cell;
-    optional<rrc_meas_quant_results> results_csi_rs_cell;
+    std::optional<rrc_meas_quant_results> results_ssb_cell;
+    std::optional<rrc_meas_quant_results> results_csi_rs_cell;
   };
 
   struct rs_idx_results_ {
@@ -567,27 +544,71 @@ struct rrc_meas_result_nr {
     slotted_id_vector<uint8_t, rrc_results_per_csi_rs_idx> results_csi_rs_idxes; // indexed by csi_rs_idx
   };
 
-  optional<pci_t>           pci;
-  cell_results_             cell_results;
-  optional<rs_idx_results_> rs_idx_results;
+  std::optional<pci_t>           pci;
+  cell_results_                  cell_results;
+  std::optional<rs_idx_results_> rs_idx_results;
 };
 
 struct rrc_meas_result_serv_mo {
-  uint8_t                      serv_cell_id;
-  rrc_meas_result_nr           meas_result_serving_cell;
-  optional<rrc_meas_result_nr> meas_result_best_neigh_cell;
+  uint8_t                           serv_cell_id;
+  rrc_meas_result_nr                meas_result_serving_cell;
+  std::optional<rrc_meas_result_nr> meas_result_best_neigh_cell;
 };
 
 struct rrc_meas_result_neigh_cells {
-  // choice
   std::vector<rrc_meas_result_nr> meas_result_list_nr;
 };
 
 struct rrc_meas_results {
   meas_id_t                                           meas_id;
   slotted_id_vector<uint8_t, rrc_meas_result_serv_mo> meas_result_serving_mo_list; // indexed by serv_cell_id
-  optional<rrc_meas_result_neigh_cells>               meas_result_neigh_cells;
+  std::optional<rrc_meas_result_neigh_cells>          meas_result_neigh_cells;
 };
 
 } // namespace srs_cu_cp
 } // namespace srsran
+
+namespace fmt {
+
+// Cell meas config formatter
+template <>
+struct formatter<srsran::srs_cu_cp::rrc_meas_obj_nr> {
+  template <typename ParseContext>
+  auto parse(ParseContext& ctx) -> decltype(ctx.begin())
+  {
+    return ctx.begin();
+  }
+
+  template <typename FormatContext>
+  auto format(srsran::srs_cu_cp::rrc_meas_obj_nr meas_object, FormatContext& ctx)
+      -> decltype(std::declval<FormatContext>().out())
+  {
+    std::string smtc1_str;
+    std::string smtc2_str;
+
+    if (meas_object.smtc1.has_value()) {
+      smtc1_str = fmt::format(" smtc1: periodicity={} offset={} dur={}",
+                              meas_object.smtc1.value().periodicity_and_offset.periodicity,
+                              meas_object.smtc1.value().periodicity_and_offset.offset,
+                              meas_object.smtc1.value().dur);
+    }
+
+    if (meas_object.smtc2.has_value()) {
+      smtc2_str = " smtc2: pci_list=[ ";
+      for (const auto& pci : meas_object.smtc2.value().pci_list) {
+        smtc2_str = smtc2_str + std::to_string(pci) + " ";
+      }
+      smtc2_str = fmt::format("{}] periodicity={}", smtc2_str, meas_object.smtc2.value().periodicity);
+    }
+
+    return format_to(
+        ctx.out(),
+        "ssb_freq={} ssb_scs={}{}{}",
+        meas_object.ssb_freq.has_value() ? fmt::to_string(meas_object.ssb_freq.value()) : "?",
+        meas_object.ssb_subcarrier_spacing.has_value() ? to_string(meas_object.ssb_subcarrier_spacing.value()) : "?",
+        smtc1_str,
+        smtc2_str);
+  }
+};
+
+} // namespace fmt

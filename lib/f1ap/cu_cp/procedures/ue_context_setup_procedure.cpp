@@ -53,12 +53,14 @@ static void fill_f1ap_ue_context_setup_response(f1ap_ue_context_setup_response& 
 
 // ---- UE Context Setup Procedure ----
 
-ue_context_setup_procedure::ue_context_setup_procedure(const f1ap_ue_context_setup_request& request_,
-                                                       f1ap_ue_context_list&                ue_ctxt_list_,
-                                                       f1ap_du_processor_notifier&          du_processor_notifier_,
-                                                       f1ap_message_notifier&               f1ap_notif_,
-                                                       srslog::basic_logger&                logger_,
-                                                       optional<rrc_ue_transfer_context>    rrc_context_) :
+ue_context_setup_procedure::ue_context_setup_procedure(const f1ap_configuration&              f1ap_cfg_,
+                                                       const f1ap_ue_context_setup_request&   request_,
+                                                       f1ap_ue_context_list&                  ue_ctxt_list_,
+                                                       f1ap_du_processor_notifier&            du_processor_notifier_,
+                                                       f1ap_message_notifier&                 f1ap_notif_,
+                                                       srslog::basic_logger&                  logger_,
+                                                       std::optional<rrc_ue_transfer_context> rrc_context_) :
+  f1ap_cfg(f1ap_cfg_),
   request(request_),
   ue_ctxt_list(ue_ctxt_list_),
   du_processor_notifier(du_processor_notifier_),
@@ -81,7 +83,7 @@ void ue_context_setup_procedure::operator()(coro_context<async_task<f1ap_ue_cont
   }
 
   // Subscribe to respective publisher to receive UE CONTEXT SETUP RESPONSE/FAILURE message.
-  transaction_sink.subscribe_to(ue_ctxt->ev_mng.context_setup_outcome);
+  transaction_sink.subscribe_to(ue_ctxt->ev_mng.context_setup_outcome, f1ap_cfg.proc_timeout);
 
   // Send command to DU.
   send_ue_context_setup_request();
@@ -104,7 +106,7 @@ bool ue_context_setup_procedure::find_or_create_f1ap_ue_context()
 
   // F1AP UE context does not yet exist.
   // Allocate gNB-CU-UE-F1AP-ID.
-  gnb_cu_ue_f1ap_id_t tmp_cu_ue_f1ap_id = ue_ctxt_list.next_gnb_cu_ue_f1ap_id();
+  gnb_cu_ue_f1ap_id_t tmp_cu_ue_f1ap_id = ue_ctxt_list.allocate_gnb_cu_ue_f1ap_id();
   if (tmp_cu_ue_f1ap_id == gnb_cu_ue_f1ap_id_t::invalid) {
     logger.warning("ue={} proc=\"{}\": No CU UE F1AP ID available", request.ue_index, name());
     return false;
@@ -134,16 +136,16 @@ bool ue_context_setup_procedure::create_ue_rrc_context(const f1ap_ue_context_set
     req.du_to_cu_rrc_container = ue_ctxt_setup_resp.du_to_cu_rrc_info.cell_group_cfg.copy();
     req.prev_context           = std::move(rrc_context);
 
-    ue_rrc_context_creation_response resp = du_processor_notifier.on_ue_rrc_context_creation_request(req);
-    if (resp.f1ap_rrc_notifier == nullptr) {
+    ue_rrc_context_creation_outcome outcome = du_processor_notifier.on_ue_rrc_context_creation_request(req);
+    if (not outcome.has_value()) {
       logger.warning("Couldn't create UE RRC context in target cell");
       return false;
     }
 
     // Add RRC notifier to F1AP UE context.
-    ue_ctxt_list.add_rrc_notifier(req.ue_index, resp.f1ap_rrc_notifier);
+    ue_ctxt_list.add_rrc_notifier(outcome->ue_index, outcome->f1ap_rrc_notifier);
 
-    logger.debug("ue={} Added RRC UE notifier", req.ue_index);
+    logger.debug("ue={} Added RRC UE notifier", outcome->ue_index);
   }
 
   return true;
@@ -159,12 +161,6 @@ void ue_context_setup_procedure::send_ue_context_setup_request()
 
   // Convert common type to asn1
   fill_asn1_ue_context_setup_request(req, request, ue_ctxt->ue_ids);
-
-  if (logger.debug.enabled()) {
-    asn1::json_writer js;
-    f1ap_ue_ctxt_setup_request_msg.pdu.to_json(js);
-    logger.debug("Containerized UeContextSetupRequest: {}", js.to_string());
-  }
 
   // send UE context setup request message
   f1ap_notifier.on_new_message(f1ap_ue_ctxt_setup_request_msg);
@@ -193,6 +189,8 @@ f1ap_ue_context_setup_response ue_context_setup_procedure::handle_procedure_resu
 
     // Create UE RRC context in CU-CP, if required.
     resp.success = create_ue_rrc_context(resp);
+
+    logger.debug("ue={} proc=\"{}\": finished successfully", request.ue_index, name());
 
     return resp;
   }
@@ -229,7 +227,7 @@ static void fill_asn1_ue_context_setup_request(asn1::f1ap::ue_context_setup_requ
     asn1_request->gnb_du_ue_f1ap_id = gnb_du_ue_f1ap_id_to_uint(ue_ids.du_ue_f1ap_id);
   }
 
-  asn1_request->sp_cell_id    = nr_cgi_to_f1ap_asn1(request.sp_cell_id);
+  asn1_request->sp_cell_id    = cgi_to_asn1(request.sp_cell_id);
   asn1_request->serv_cell_idx = request.serv_cell_idx;
 
   // sp cell ul cfg
@@ -248,7 +246,7 @@ static void fill_asn1_ue_context_setup_request(asn1::f1ap::ue_context_setup_requ
       asn1_candidate_cell_item_container.load_info_obj(ASN1_F1AP_ID_CANDIDATE_SP_CELL_ITEM);
 
       auto& asn1_candidate_cell_item = asn1_candidate_cell_item_container.value().candidate_sp_cell_item();
-      asn1_candidate_cell_item.candidate_sp_cell_id = nr_cgi_to_f1ap_asn1(candidate_cell_item.candidate_sp_cell_id);
+      asn1_candidate_cell_item.candidate_sp_cell_id = cgi_to_asn1(candidate_cell_item.candidate_sp_cell_id);
 
       asn1_request->candidate_sp_cell_list.push_back(asn1_candidate_cell_item_container);
     }
@@ -299,32 +297,13 @@ static void fill_asn1_ue_context_setup_request(asn1::f1ap::ue_context_setup_requ
   // srbs to be setup list
   if (!request.srbs_to_be_setup_list.empty()) {
     asn1_request->srbs_to_be_setup_list_present = true;
-
-    for (const auto& srbs_to_be_setup_item : request.srbs_to_be_setup_list) {
-      asn1::protocol_ie_single_container_s<asn1::f1ap::srbs_to_be_setup_item_ies_o>
-          asn1_srbs_to_be_setup_item_container;
-      asn1_srbs_to_be_setup_item_container.set_item(ASN1_F1AP_ID_SRBS_TO_BE_SETUP_ITEM);
-      auto& asn1_srbs_to_be_setup_item = asn1_srbs_to_be_setup_item_container.value().srbs_to_be_setup_item();
-
-      f1ap_srbs_to_be_setup_mod_item_to_asn1(asn1_srbs_to_be_setup_item, srbs_to_be_setup_item);
-
-      asn1_request->srbs_to_be_setup_list.push_back(asn1_srbs_to_be_setup_item_container);
-    }
+    asn1_request->srbs_to_be_setup_list         = make_srb_to_setup_list(request.srbs_to_be_setup_list);
   }
 
   // drbs to be setup list
   if (!request.drbs_to_be_setup_list.empty()) {
     asn1_request->drbs_to_be_setup_list_present = true;
-
-    for (const auto& drb_to_be_setup_item : request.drbs_to_be_setup_list) {
-      asn1::protocol_ie_single_container_s<asn1::f1ap::drbs_to_be_setup_item_ies_o> asn1_drb_to_be_setup_item_container;
-      asn1_drb_to_be_setup_item_container.load_info_obj(ASN1_F1AP_ID_DRBS_TO_BE_SETUP_ITEM);
-
-      f1ap_drbs_to_be_setup_mod_item_to_asn1(asn1_drb_to_be_setup_item_container.value().drbs_to_be_setup_item(),
-                                             drb_to_be_setup_item);
-
-      asn1_request->drbs_to_be_setup_list.push_back(asn1_drb_to_be_setup_item_container);
-    }
+    asn1_request->drbs_to_be_setup_list         = make_drb_to_setup_list(request.drbs_to_be_setup_list);
   }
 
   // inactivity monitoring request
@@ -374,7 +353,7 @@ static void fill_asn1_ue_context_setup_request(asn1::f1ap::ue_context_setup_requ
     asn1_request->res_coordination_transfer_info_present                                  = true;
     asn1_request->res_coordination_transfer_info.res_coordination_eutra_cell_info_present = false;
     asn1_request->res_coordination_transfer_info.m_enb_cell_id.from_number(
-        request.res_coordination_transfer_info.value().m_enb_cell_id);
+        request.res_coordination_transfer_info.value().m_enb_cell_id.value());
   }
 
   // serving cell mo
@@ -404,7 +383,7 @@ static void fill_f1ap_ue_context_setup_response(f1ap_ue_context_setup_response& 
   response.ue_index = ue_index;
 
   // cause
-  response.cause = f1ap_asn1_to_cause(asn1_failure->cause);
+  response.cause = asn1_to_cause(asn1_failure->cause);
 
   // potential sp cell list
   if (asn1_failure->potential_sp_cell_list_present) {
@@ -412,7 +391,7 @@ static void fill_f1ap_ue_context_setup_response(f1ap_ue_context_setup_response& 
 
     for (const auto& asn1_potential_sp_cell_item : asn1_failure->potential_sp_cell_list) {
       potential_sp_cell_item.potential_sp_cell_id =
-          f1ap_asn1_to_nr_cgi(asn1_potential_sp_cell_item->potential_sp_cell_item().potential_sp_cell_id);
+          cgi_from_asn1(asn1_potential_sp_cell_item->potential_sp_cell_item().potential_sp_cell_id).value();
 
       response.potential_sp_cell_list.push_back(potential_sp_cell_item);
     }
@@ -450,10 +429,7 @@ static void fill_f1ap_ue_context_setup_response(f1ap_ue_context_setup_response& 
   if (asn1_response->drbs_setup_list_present) {
     for (auto asn1_drbs_setup_list_item : asn1_response->drbs_setup_list) {
       auto& asn1_drb_mod_item = asn1_drbs_setup_list_item.value().drbs_setup_item();
-
-      f1ap_drbs_setup_mod_item drb_setup_item = asn1_to_f1ap_drbs_setup_mod_item(asn1_drb_mod_item);
-
-      response.drbs_setup_list.emplace(drb_setup_item.drb_id, drb_setup_item);
+      response.drbs_setup_list.push_back(make_drb_setupmod(asn1_drb_mod_item));
     }
   }
 
@@ -461,11 +437,7 @@ static void fill_f1ap_ue_context_setup_response(f1ap_ue_context_setup_response& 
   if (asn1_response->srbs_failed_to_be_setup_list_present) {
     for (auto asn1_srbs_failed_setup_list_item : asn1_response->srbs_failed_to_be_setup_list) {
       auto& asn1_srb_failed_item = asn1_srbs_failed_setup_list_item.value().srbs_failed_to_be_setup_item();
-
-      f1ap_srbs_failed_to_be_setup_mod_item srb_failed_item =
-          asn1_to_f1ap_srbs_failed_to_be_setup_mod_item(asn1_srb_failed_item);
-
-      response.srbs_failed_to_be_setup_list.emplace(srb_failed_item.srb_id, srb_failed_item);
+      response.srbs_failed_to_be_setup_list.push_back(make_srb_failed_to_setupmod(asn1_srb_failed_item));
     }
   }
 
@@ -473,11 +445,7 @@ static void fill_f1ap_ue_context_setup_response(f1ap_ue_context_setup_response& 
   if (asn1_response->drbs_failed_to_be_setup_list_present) {
     for (auto asn1_drbs_failed_setup_list_item : asn1_response->drbs_failed_to_be_setup_list) {
       auto& asn1_drb_failed_item = asn1_drbs_failed_setup_list_item.value().drbs_failed_to_be_setup_item();
-
-      f1ap_drbs_failed_to_be_setup_mod_item drb_failed_item =
-          asn1_to_f1ap_drbs_failed_to_be_setup_mod_item(asn1_drb_failed_item);
-
-      response.drbs_failed_to_be_setup_list.emplace(drb_failed_item.drb_id, drb_failed_item);
+      response.drbs_failed_to_be_setup_list.push_back(make_drb_failed_to_setupmod(asn1_drb_failed_item));
     }
   }
 
@@ -488,12 +456,12 @@ static void fill_f1ap_ue_context_setup_response(f1ap_ue_context_setup_response& 
 
       // scell id
       scell_failed_to_setup_item.scell_id =
-          f1ap_asn1_to_nr_cgi(asn1_scell_failed_to_setup_item->scell_failedto_setup_item().scell_id);
+          cgi_from_asn1(asn1_scell_failed_to_setup_item->scell_failedto_setup_item().scell_id).value();
 
       // cause
       if (asn1_scell_failed_to_setup_item->scell_failedto_setup_item().cause_present) {
         scell_failed_to_setup_item.cause =
-            f1ap_asn1_to_cause(asn1_scell_failed_to_setup_item->scell_failedto_setup_item().cause);
+            asn1_to_cause(asn1_scell_failed_to_setup_item->scell_failedto_setup_item().cause);
       }
 
       response.scell_failed_to_setup_list.push_back(scell_failed_to_setup_item);
@@ -510,10 +478,7 @@ static void fill_f1ap_ue_context_setup_response(f1ap_ue_context_setup_response& 
   if (asn1_response->srbs_setup_list_present) {
     for (auto asn1_srbs_setup_list_item : asn1_response->srbs_setup_list) {
       auto& asn1_srbs_setup_item = asn1_srbs_setup_list_item.value().srbs_setup_item();
-
-      f1ap_srbs_setup_mod_item srbs_setup_item = asn1_to_f1ap_srbs_setup_mod_item(asn1_srbs_setup_item);
-
-      response.srbs_setup_list.emplace(srbs_setup_item.srb_id, srbs_setup_item);
+      response.srbs_setup_list.push_back(asn1_to_f1ap_srbs_setup_mod_item(asn1_srbs_setup_item));
     }
   }
 }

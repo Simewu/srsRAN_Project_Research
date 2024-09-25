@@ -23,7 +23,7 @@
 #pragma once
 
 #include "rlc_bearer_logger.h"
-#include "srsran/adt/concurrent_queue.h"
+#include "srsran/adt/spsc_queue.h"
 #include "srsran/rlc/rlc_tx.h"
 
 namespace srsran {
@@ -47,7 +47,8 @@ namespace srsran {
 class rlc_sdu_queue_lockfree
 {
 public:
-  explicit rlc_sdu_queue_lockfree(uint16_t capacity_, rlc_bearer_logger& logger_) : logger(logger_), capacity(capacity_)
+  explicit rlc_sdu_queue_lockfree(uint16_t capacity_, uint32_t byte_limit_, rlc_bearer_logger& logger_) :
+    logger(logger_), capacity(capacity_), byte_limit(byte_limit_)
   {
     sdu_states = std::make_unique<std::atomic<uint32_t>[]>(capacity);
     sdu_sizes  = std::make_unique<std::atomic<size_t>[]>(capacity);
@@ -68,14 +69,21 @@ public:
   /// The write fails (returns false) in the following cases:
   /// - The internal queue is full.
   /// - Another SDU with same value of [PDCP_SN mod capacity] exists (either valid or discarded) in the queue.
+  /// - The new SDU makes the queue exceed a preconfigured limit of buffered bytes.
   ///
   /// \param sdu The RLC SDU that shall be written.
   /// \return True if the RLC SDU was successfully written to the queue, otherwise false.
   bool write(rlc_sdu sdu)
   {
+    // first check if we do not exeed the byte limit
+    state_t st = get_state();
+    if (sdu.buf.length() + st.n_bytes >= byte_limit) {
+      return false;
+    }
+
     // if the SDU has a PDCP SN, first check the slot is available
-    optional<uint32_t> pdcp_sn  = sdu.pdcp_sn;
-    const size_t       sdu_size = sdu.buf.length();
+    std::optional<uint32_t> pdcp_sn  = sdu.pdcp_sn;
+    const size_t            sdu_size = sdu.buf.length();
     if (pdcp_sn.has_value()) {
       const uint32_t pdcp_sn_value = sdu.pdcp_sn.value();
       // load slot state (memory_order_acquire ensures sdu_size is written after this)
@@ -105,8 +113,7 @@ public:
     }
 
     // update totals
-    n_sdus.fetch_add(1, std::memory_order_relaxed);
-    n_bytes.fetch_add(sdu_size, std::memory_order_relaxed);
+    state_add(sdu_size);
     return true;
   }
 
@@ -151,8 +158,7 @@ public:
     }
 
     // update totals
-    n_sdus.fetch_sub(1, std::memory_order_relaxed);
-    n_bytes.fetch_sub(sdu_size, std::memory_order_relaxed);
+    state_sub(sdu_size);
     return true;
   }
 
@@ -189,27 +195,32 @@ public:
         sdu_is_valid = true;
 
         // update totals
-        n_sdus.fetch_sub(1, std::memory_order_relaxed);
-        n_bytes.fetch_sub(sdu.buf.length(), std::memory_order_relaxed);
+        state_sub(sdu.buf.length());
       }
       // try again if SDU is not valid
     } while (not sdu_is_valid);
     return true;
   }
 
-  /// \brief Reads the number of buffered SDUs that are not marked as discarded.
-  ///
-  /// This function may be called by any thread.
-  ///
-  /// \return The number of buffered SDUs that are not marked as discarded.
-  uint32_t size_sdus() const { return n_sdus.load(std::memory_order_relaxed); }
+  /// \brief Container for return value of \c get_state function.
+  struct state_t {
+    uint32_t n_sdus;  ///< Number of buffered SDUs that are not marked as discarded.
+    uint32_t n_bytes; ///< Number of buffered bytes that are not marked as discarded.
+  };
 
-  /// \brief Reads the number of buffered SDU bytes that are not marked as discarded.
+  /// \brief Reads the state of the queue, i.e. number of buffered SDUs and bytes that are not marked as discarded.
   ///
   /// This function may be called by any thread.
   ///
-  /// \return The number of buffered SDU bytes that are not marked as discarded.
-  uint32_t size_bytes() const { return n_bytes.load(std::memory_order_relaxed); }
+  /// \return Current state of the queue.
+  state_t get_state() const
+  {
+    uint64_t packed = state.load(std::memory_order_relaxed);
+    state_t  result;
+    result.n_bytes = packed & 0xffffffff;
+    result.n_sdus  = packed >> 32;
+    return result;
+  }
 
   /// \brief Checks if the internal queue is empty.
   ///
@@ -267,8 +278,7 @@ private:
     }
 
     // update totals
-    n_sdus.fetch_sub(1, std::memory_order_relaxed);
-    n_bytes.fetch_sub(sdu_size, std::memory_order_relaxed);
+    state_sub(sdu_size);
     return sdu_is_valid;
   }
 
@@ -277,9 +287,12 @@ private:
 
   rlc_bearer_logger& logger;
 
-  uint16_t              capacity;
-  std::atomic<uint32_t> n_bytes = {0};
-  std::atomic<uint32_t> n_sdus  = {0};
+  const uint16_t capacity;
+  const uint32_t byte_limit;
+
+  /// Combined atomic state of the queue reflecting the number of SDUs and the number of bytes.
+  /// Upper 32 bit: n_sdus; Lower 32 bit: n_bytes
+  std::atomic<uint64_t> state = {0};
 
   std::unique_ptr<
       concurrent_queue<rlc_sdu, concurrent_queue_policy::lockfree_spsc, concurrent_queue_wait_policy::non_blocking>>
@@ -287,13 +300,29 @@ private:
 
   std::unique_ptr<std::atomic<uint32_t>[]> sdu_states;
   std::unique_ptr<std::atomic<size_t>[]>   sdu_sizes;
+
+  /// \brief Adds one SDU of given size to the atomic queue state.
+  /// \param sdu_size The size of the SDU.
+  void state_add(uint32_t sdu_size)
+  {
+    uint64_t state_change = static_cast<uint64_t>(1U) << 32U | sdu_size;
+    state.fetch_add(state_change, std::memory_order_relaxed);
+  }
+
+  /// \brief Subtracts one SDU of given size from the atomic queue state.
+  /// \param sdu_size The size of the SDU.
+  void state_sub(uint32_t sdu_size)
+  {
+    uint64_t state_change = static_cast<uint64_t>(1U) << 32U | sdu_size;
+    state.fetch_sub(state_change, std::memory_order_relaxed);
+  }
 };
 
 } // namespace srsran
 
 namespace fmt {
 template <>
-struct formatter<srsran::rlc_sdu_queue_lockfree> {
+struct formatter<srsran::rlc_sdu_queue_lockfree::state_t> {
   template <typename ParseContext>
   auto parse(ParseContext& ctx) -> decltype(ctx.begin())
   {
@@ -301,10 +330,9 @@ struct formatter<srsran::rlc_sdu_queue_lockfree> {
   }
 
   template <typename FormatContext>
-  auto format(const srsran::rlc_sdu_queue_lockfree& q, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::rlc_sdu_queue_lockfree::state_t& state, FormatContext& ctx)
   {
-    return format_to(ctx.out(), "queued_sdus={} queued_bytes={}", q.size_sdus(), q.size_bytes());
+    return format_to(ctx.out(), "queued_sdus={} queued_bytes={}", state.n_sdus, state.n_bytes);
   }
 };
 

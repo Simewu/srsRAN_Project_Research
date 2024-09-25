@@ -24,10 +24,12 @@
 
 #include "../common/e1ap_asn1_converters.h"
 #include "srsran/asn1/e1ap/e1ap.h"
+#include "srsran/asn1/e1ap/e1ap_pdu_contents.h"
+#include "srsran/e1ap/common/e1_setup_messages.h"
 #include "srsran/e1ap/cu_up/e1ap_cu_up_bearer_context_update.h"
-#include "srsran/ran/bcd_helpers.h"
-#include "srsran/ran/five_qi.h"
-#include "srsran/ran/qos_prio_level.h"
+#include "srsran/ran/bcd_helper.h"
+#include "srsran/ran/qos/five_qi.h"
+#include "srsran/ran/qos/qos_prio_level.h"
 
 namespace srsran {
 namespace srs_cu_up {
@@ -53,7 +55,7 @@ inline asn1::e1ap::gnb_cu_up_e1_setup_request_s cu_up_e1_setup_request_to_asn1(c
     asn1::e1ap::supported_plmns_item_s asn1_plmn_item;
 
     // plmn id
-    asn1_plmn_item.plmn_id.from_number(plmn_string_to_bcd(plmn_item.plmn_id));
+    asn1_plmn_item.plmn_id.from_number(bcd_helper::plmn_string_to_bcd(plmn_item.plmn_id));
 
     // slice support list
     for (const auto& slice_item : plmn_item.slice_support_list) {
@@ -83,26 +85,26 @@ inline asn1::e1ap::gnb_cu_up_e1_setup_request_s cu_up_e1_setup_request_to_asn1(c
         asn1::e1ap::ng_ran_qos_support_item_s asn1_ran_item;
 
         // five qi
-        asn1_ran_item.non_dyn_5qi_descriptor.five_qi = five_qi_to_uint(ran_item.non_dyn_5qi_descriptor.five_qi);
+        asn1_ran_item.non_dyn_5qi_descriptor.five_qi = five_qi_to_uint(ran_item.non_dyn_5qi_desc.five_qi);
 
         // qos prio level
-        if (ran_item.non_dyn_5qi_descriptor.qos_prio_level.has_value()) {
+        if (ran_item.non_dyn_5qi_desc.qos_prio_level.has_value()) {
           asn1_ran_item.non_dyn_5qi_descriptor.qos_prio_level_present = true;
           asn1_ran_item.non_dyn_5qi_descriptor.qos_prio_level =
-              qos_prio_level_to_uint(ran_item.non_dyn_5qi_descriptor.qos_prio_level.value());
+              qos_prio_level_to_uint(ran_item.non_dyn_5qi_desc.qos_prio_level.value());
         }
 
         // averaging win
-        if (ran_item.non_dyn_5qi_descriptor.averaging_win.has_value()) {
+        if (ran_item.non_dyn_5qi_desc.averaging_win.has_value()) {
           asn1_ran_item.non_dyn_5qi_descriptor.averaging_win_present = true;
-          asn1_ran_item.non_dyn_5qi_descriptor.averaging_win = ran_item.non_dyn_5qi_descriptor.averaging_win.value();
+          asn1_ran_item.non_dyn_5qi_descriptor.averaging_win         = ran_item.non_dyn_5qi_desc.averaging_win.value();
         }
 
         // max data burst
-        if (ran_item.non_dyn_5qi_descriptor.max_data_burst_volume.has_value()) {
+        if (ran_item.non_dyn_5qi_desc.max_data_burst_volume.has_value()) {
           asn1_ran_item.non_dyn_5qi_descriptor.max_data_burst_volume_present = true;
           asn1_ran_item.non_dyn_5qi_descriptor.max_data_burst_volume =
-              ran_item.non_dyn_5qi_descriptor.max_data_burst_volume.value();
+              ran_item.non_dyn_5qi_desc.max_data_burst_volume.value();
         }
 
         asn1_plmn_item.qos_params_support_list.ng_ran_qos_support_list.push_back(asn1_ran_item);
@@ -170,7 +172,7 @@ inline void fill_e1ap_drb_to_setup_item(e1ap_drb_to_setup_item_ng_ran&          
 
   // drb inactivity timer
   if (asn1_drb_to_setup_item.drb_inactivity_timer_present) {
-    drb_to_setup_item.drb_inactivity_timer = asn1_drb_to_setup_item.drb_inactivity_timer;
+    drb_to_setup_item.drb_inactivity_timer = std::chrono::seconds(asn1_drb_to_setup_item.drb_inactivity_timer);
   }
 
   // pdcp sn status info
@@ -202,12 +204,12 @@ inline void fill_e1ap_bearer_context_setup_request(e1ap_bearer_context_setup_req
   request.ue_dl_aggregate_maximum_bit_rate = asn1_request->ue_dl_aggr_max_bit_rate;
 
   // serving plmn
-  request.serving_plmn = plmn_bcd_to_string(asn1_request->serving_plmn.to_number());
+  request.serving_plmn = bcd_helper::plmn_bcd_to_string(asn1_request->serving_plmn.to_number());
 
   // activity notification level
   request.activity_notif_level = asn1_to_activity_notification_level(asn1_request->activity_notif_level.value);
   if (request.activity_notif_level == activity_notification_level_t::ue) {
-    request.ue_inactivity_timer = asn1_request->ue_inactivity_timer;
+    request.ue_inactivity_timer = std::chrono::seconds(asn1_request->ue_inactivity_timer);
   }
 
   // pdu session resource to setup list
@@ -263,7 +265,8 @@ inline void fill_e1ap_bearer_context_setup_request(e1ap_bearer_context_setup_req
 
       // pdu session inactivity timer
       if (asn1_pdu_session_res_item.pdu_session_inactivity_timer_present) {
-        pdu_session_res_item.pdu_session_inactivity_timer = asn1_pdu_session_res_item.pdu_session_inactivity_timer;
+        pdu_session_res_item.pdu_session_inactivity_timer =
+            std::chrono::seconds(asn1_pdu_session_res_item.pdu_session_inactivity_timer);
       }
 
       // existing allocated ng dl up tnl info
@@ -288,7 +291,7 @@ inline void fill_e1ap_bearer_context_setup_request(e1ap_bearer_context_setup_req
 
   // ue inactivity timer
   if (asn1_request->ue_inactivity_timer_present) {
-    request.ue_inactivity_timer = asn1_request->ue_inactivity_timer;
+    request.ue_inactivity_timer = std::chrono::seconds(asn1_request->ue_inactivity_timer);
   }
 
   // bearer context status change
@@ -373,7 +376,7 @@ inline void fill_asn1_bearer_context_setup_response(asn1::e1ap::sys_bearer_conte
     for (const auto& failed_item : response.pdu_session_resource_failed_list) {
       asn1::e1ap::pdu_session_res_failed_item_s asn1_failed_item;
       asn1_failed_item.pdu_session_id = pdu_session_id_to_uint(failed_item.pdu_session_id);
-      asn1_failed_item.cause          = cause_to_asn1_cause(failed_item.cause);
+      asn1_failed_item.cause          = cause_to_asn1(failed_item.cause);
 
       asn1_bearer_context_setup_response.pdu_session_res_failed_list.push_back(asn1_failed_item);
     }
@@ -419,7 +422,7 @@ inline void fill_e1ap_bearer_context_modification_request(e1ap_bearer_context_mo
 
   // ue inactivity timer
   if (asn1_request->ue_inactivity_timer_present) {
-    request.ue_inactivity_timer = asn1_request->ue_inactivity_timer;
+    request.ue_inactivity_timer = std::chrono::seconds(asn1_request->ue_inactivity_timer);
   }
 
   // data discard required
@@ -485,7 +488,7 @@ inline void fill_e1ap_bearer_context_modification_request(e1ap_bearer_context_mo
         // pdu session inactivity timer
         if (asn1_res_to_setup_mod_item.pdu_session_inactivity_timer_present) {
           pdu_session_res_to_setup_mod_item.pdu_session_inactivity_timer =
-              asn1_res_to_setup_mod_item.pdu_session_inactivity_timer;
+              std::chrono::seconds(asn1_res_to_setup_mod_item.pdu_session_inactivity_timer);
         }
 
         // drb to setup mod list ng ran
@@ -517,7 +520,8 @@ inline void fill_e1ap_bearer_context_modification_request(e1ap_bearer_context_mo
 
           // drb inactivity timer
           if (asn1_drb_to_setup_mod_item_ng_ran.drb_inactivity_timer_present) {
-            drb_to_setup_mod_item_ng_ran.drb_inactivity_timer = asn1_drb_to_setup_mod_item_ng_ran.drb_inactivity_timer;
+            drb_to_setup_mod_item_ng_ran.drb_inactivity_timer =
+                std::chrono::seconds(asn1_drb_to_setup_mod_item_ng_ran.drb_inactivity_timer);
           }
 
           // pdcp sn status info
@@ -736,7 +740,7 @@ inline void fill_asn1_bearer_context_modification_response(asn1::e1ap::sys_beare
     for (const auto& res_failed_mod_item : response.pdu_session_resource_failed_list) {
       asn1::e1ap::pdu_session_res_failed_mod_item_s asn1_res_failed_mod_item;
       asn1_res_failed_mod_item.pdu_session_id = pdu_session_id_to_uint(res_failed_mod_item.pdu_session_id);
-      asn1_res_failed_mod_item.cause          = cause_to_asn1_cause(res_failed_mod_item.cause);
+      asn1_res_failed_mod_item.cause          = cause_to_asn1(res_failed_mod_item.cause);
 
       asn1_bearer_context_modification_response.pdu_session_res_failed_mod_list.push_back(asn1_res_failed_mod_item);
     }
@@ -859,7 +863,7 @@ inline void fill_asn1_bearer_context_modification_response(asn1::e1ap::sys_beare
     for (const auto& res_failed_to_modify_item : response.pdu_session_resource_failed_to_modify_list) {
       asn1::e1ap::pdu_session_res_failed_to_modify_item_s asn1_res_failed_to_modify_item;
       asn1_res_failed_to_modify_item.pdu_session_id = pdu_session_id_to_uint(res_failed_to_modify_item.pdu_session_id);
-      asn1_res_failed_to_modify_item.cause          = cause_to_asn1_cause(res_failed_to_modify_item.cause);
+      asn1_res_failed_to_modify_item.cause          = cause_to_asn1(res_failed_to_modify_item.cause);
 
       asn1_bearer_context_modification_response.pdu_session_res_failed_to_modify_list.push_back(
           asn1_res_failed_to_modify_item);

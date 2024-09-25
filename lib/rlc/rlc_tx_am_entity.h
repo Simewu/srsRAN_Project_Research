@@ -37,11 +37,12 @@ namespace srsran {
 
 /// Container to hold a SDU for transmission, the progress in case of segmentation, and associated meta data
 struct rlc_tx_am_sdu_info {
-  byte_buffer                           sdu = {};
+  byte_buffer                           sdu     = {};    ///< SDU buffer
+  bool                                  is_retx = false; ///< Determines whether this SDU is a PDCP retransmission
+  std::optional<uint32_t>               pdcp_sn;         ///< Optional PDCP sequence number
   std::chrono::system_clock::time_point time_of_arrival;
-  optional<uint32_t>                    pdcp_sn;
-  uint32_t                              next_so    = 0;
-  uint32_t                              retx_count = RETX_COUNT_NOT_STARTED;
+  uint32_t                              next_so    = 0;                      ///< Segmentation progress
+  uint32_t                              retx_count = RETX_COUNT_NOT_STARTED; ///< Retransmission counter
 };
 
 /// \brief TX state variables
@@ -136,25 +137,38 @@ private:
   /// latest buffer state upon execution.
   std::atomic_flag pending_buffer_state = ATOMIC_FLAG_INIT;
 
+  bool stopped = false;
+
 public:
-  rlc_tx_am_entity(uint32_t                             du_index,
+  rlc_tx_am_entity(gnb_du_id_t                          gnb_du_id,
                    du_ue_index_t                        ue_index,
-                   rb_id_t                              rb_id,
+                   rb_id_t                              rb_id_,
                    const rlc_tx_am_config&              config,
                    rlc_tx_upper_layer_data_notifier&    upper_dn_,
                    rlc_tx_upper_layer_control_notifier& upper_cn_,
                    rlc_tx_lower_layer_notifier&         lower_dn_,
-                   timer_factory                        timers,
+                   rlc_metrics_aggregator&              metrics_aggregator_,
+                   rlc_pcap&                            pcap_,
                    task_executor&                       pcell_executor_,
                    task_executor&                       ue_executor_,
-                   bool                                 metrics_enabled_,
-                   rlc_pcap&                            pcap_);
+                   timer_manager&                       timers);
+
+  void stop() final
+  {
+    // Stop all timers. Any queued handlers of timers that just expired before this call are canceled automatically
+    if (not stopped) {
+      poll_retransmit_timer.stop();
+      high_metrics_timer.stop();
+      low_metrics_timer.stop();
+      stopped = true;
+    }
+  };
 
   // TX/RX interconnect
   void set_status_provider(rlc_rx_am_status_provider* status_provider_) { status_provider = status_provider_; }
 
   // Interfaces for higher layers
-  void handle_sdu(rlc_sdu sdu) override;
+  void handle_sdu(byte_buffer sdu_buf, bool is_retx) override;
   void discard_sdu(uint32_t pdcp_sn) override;
 
   // Interfaces for lower layers
@@ -334,7 +348,8 @@ private:
   ///
   /// Safe execution from: pcell_executor
   /// \param is_locked provides info whether the \c mutex is already locked or not.
-  void update_mac_buffer_state(bool is_locked);
+  /// \param force_notify forces a notification of the lower layer regardless of the current/previous buffer state.
+  void update_mac_buffer_state(bool is_locked, bool force_notify);
 
   /// Lock-free version of \c get_buffer_state()
   /// \return Provides the current buffer state

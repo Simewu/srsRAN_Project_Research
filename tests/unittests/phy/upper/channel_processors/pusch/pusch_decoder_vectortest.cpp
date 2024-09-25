@@ -57,20 +57,23 @@ static unsigned nof_ldpc_iterations = 6;
 static std::string decoder_type = "generic";
 
 #ifdef HWACC_PUSCH_ENABLED
-static bool        test_harq      = true;
-static bool        ext_softbuffer = true;
-static bool        std_out_sink   = true;
-static std::string hal_log_level  = "error";
-static std::string eal_arguments  = "";
+static bool                 dedicated_queue = true;
+static bool                 test_harq       = true;
+static bool                 ext_softbuffer  = true;
+static bool                 std_out_sink    = true;
+static srslog::basic_levels hal_log_level   = srslog::basic_levels::error;
+static std::string          eal_arguments   = "";
 #endif // HWACC_PUSCH_ENABLED
 
 static void usage(const char* prog)
 {
-  fmt::print("Usage: {} [-T X] [-e] [-i X] [-x] [-y] [-z error|warning|info|debug] [-h] [eal_args ...]\n", prog);
+  fmt::print("Usage: {} [-T X] [-e] [-i X] [-w] [-x] [-y] [-z error|warning|info|debug] [-h] [eal_args ...]\n", prog);
   fmt::print("\t-T       PUSCH decoder type [generic,acc100][Default {}]\n", decoder_type);
   fmt::print("\t-e       Use LDPC decoder early stop [Default {}]\n", use_early_stop);
   fmt::print("\t-i       Number of LDPC iterations [Default {}]\n", nof_ldpc_iterations);
 #ifdef HWACC_PUSCH_ENABLED
+  fmt::print("\t-w       Force shared hardware-queue use [Default {}]\n",
+             dedicated_queue ? "dedicated_queue" : "shared_queue");
   fmt::print("\t-x       Use the host's memory for the soft-buffer [Default {}]\n", !ext_softbuffer);
   fmt::print("\t-y       Force logging output written to a file [Default {}]\n", std_out_sink ? "std_out" : "file");
   fmt::print("\t-z       Set logging level for the HAL [Default {}]\n", hal_log_level);
@@ -115,7 +118,7 @@ static std::string capture_eal_args(int* argc, char*** argv)
 static void parse_args(int argc, char** argv)
 {
   int opt = 0;
-  while ((opt = getopt(argc, argv, "T:e:i:xyz:h")) != -1) {
+  while ((opt = getopt(argc, argv, "T:e:i:wxyz:h")) != -1) {
     switch (opt) {
       case 'T':
         decoder_type = std::string(optarg);
@@ -127,15 +130,19 @@ static void parse_args(int argc, char** argv)
         nof_ldpc_iterations = strtol(optarg, nullptr, 10);
         break;
 #ifdef HWACC_PUSCH_ENABLED
+      case 'w':
+        dedicated_queue = false;
+        break;
       case 'x':
         ext_softbuffer = false;
         break;
       case 'y':
         std_out_sink = false;
         break;
-      case 'z':
-        hal_log_level = std::string(optarg);
-        break;
+      case 'z': {
+        auto level    = srslog::str_to_basic_level(std::string(optarg));
+        hal_log_level = level.has_value() ? level.value() : srslog::basic_levels::error;
+      } break;
 #endif // HWACC_PUSCH_ENABLED
       case 'h':
       default:
@@ -178,13 +185,20 @@ static std::shared_ptr<hal::hw_accelerator_pusch_dec_factory> create_hw_accelera
   srslog::set_default_sink(*log_sink);
   srslog::init();
   srslog::basic_logger& logger = srslog::fetch_basic_logger("HAL", false);
-  logger.set_level(srslog::str_to_basic_level(hal_log_level));
+  logger.set_level(hal_log_level);
 
   // Pointer to a dpdk-based hardware-accelerator interface.
   static std::unique_ptr<dpdk::dpdk_eal> dpdk_interface = nullptr;
   if (!dpdk_interface) {
     dpdk_interface = dpdk::create_dpdk_eal(eal_arguments, logger);
     TESTASSERT(dpdk_interface, "Failed to open DPDK EAL with arguments.");
+  }
+
+  // Create a bbdev accelerator factory.
+  static std::unique_ptr<dpdk::bbdev_acc_factory> bbdev_acc_factory = nullptr;
+  if (!bbdev_acc_factory) {
+    bbdev_acc_factory = srsran::dpdk::create_bbdev_acc_factory("srs");
+    TESTASSERT(bbdev_acc_factory, "Failed to create the bbdev accelerator factory.");
   }
 
   // Intefacing to the bbdev-based hardware-accelerator.
@@ -194,25 +208,26 @@ static std::shared_ptr<hal::hw_accelerator_pusch_dec_factory> create_hw_accelera
   bbdev_config.nof_ldpc_dec_lcores                   = 1;
   bbdev_config.nof_fft_lcores                        = 0;
   bbdev_config.nof_mbuf                              = static_cast<unsigned>(pow2(log2_ceil(MAX_NOF_SEGMENTS)));
-  std::shared_ptr<dpdk::bbdev_acc> bbdev_accelerator = create_bbdev_acc(bbdev_config, logger);
+  std::shared_ptr<dpdk::bbdev_acc> bbdev_accelerator = bbdev_acc_factory->create(bbdev_config, logger);
   TESTASSERT(bbdev_accelerator);
 
   // Interfacing to a shared external HARQ buffer context repository.
   unsigned nof_cbs                   = MAX_NOF_SEGMENTS;
-  unsigned acc100_ext_harq_buff_size = bbdev_accelerator->get_harq_buff_size().value();
-  std::shared_ptr<ext_harq_buffer_context_repository> harq_buffer_context =
-      create_ext_harq_buffer_context_repository(nof_cbs, acc100_ext_harq_buff_size, test_harq);
+  uint64_t acc100_ext_harq_buff_size = bbdev_accelerator->get_harq_buff_size_bytes();
+  std::shared_ptr<hal::ext_harq_buffer_context_repository> harq_buffer_context =
+      hal::create_ext_harq_buffer_context_repository(nof_cbs, acc100_ext_harq_buff_size, test_harq);
   TESTASSERT(harq_buffer_context);
 
-  // Set the hardware-accelerator configuration.
-  hw_accelerator_pusch_dec_configuration hw_decoder_config;
+  // Set the PUSCH decoder hardware-accelerator factory configuration for the ACC100.
+  hal::bbdev_hwacc_pusch_dec_factory_configuration hw_decoder_config;
   hw_decoder_config.acc_type            = "acc100";
   hw_decoder_config.bbdev_accelerator   = bbdev_accelerator;
   hw_decoder_config.ext_softbuffer      = ext_softbuffer;
   hw_decoder_config.harq_buffer_context = harq_buffer_context;
+  hw_decoder_config.dedicated_queue     = dedicated_queue;
 
   // ACC100 hardware-accelerator implementation.
-  return create_hw_accelerator_pusch_dec_factory(hw_decoder_config);
+  return srsran::hal::create_bbdev_pusch_dec_acc_factory(hw_decoder_config, "srs");
 #else  // HWACC_PUSCH_ENABLED
   return nullptr;
 #endif // HWACC_PUSCH_ENABLED
@@ -234,6 +249,7 @@ static std::shared_ptr<pusch_decoder_factory> create_acc100_pusch_decoder_factor
   decoder_hw_factory_config.segmenter_factory  = segmenter_rx_factory;
   decoder_hw_factory_config.crc_factory        = crc_calculator_factory;
   decoder_hw_factory_config.hw_decoder_factory = hw_decoder_factory;
+  decoder_hw_factory_config.executor           = nullptr;
   return create_pusch_decoder_factory_hw(decoder_hw_factory_config);
 }
 
@@ -329,7 +345,7 @@ int main(int argc, char** argv)
 
       // Reserve buffer.
       unique_rx_buffer buffer = pool->get_pool().reserve({}, trx_buffer_identifier(0, 0), nof_codeblocks, true);
-      TESTASSERT(buffer.is_valid());
+      TESTASSERT(buffer);
 
       // Reset code blocks CRCs.
       buffer.get().reset_codeblocks_crc();

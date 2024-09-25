@@ -22,9 +22,10 @@
 
 #pragma once
 
-#include "lib/du_manager/du_ue/du_ue_manager_repository.h"
-#include "srsran/du/du_cell_config_helpers.h"
+#include "lib/du_manager/ran_resource_management/du_ran_resource_manager.h"
 #include "srsran/du_manager/du_manager_params.h"
+#include "srsran/gtpu/gtpu_teid_pool.h"
+#include "srsran/srslog/srslog.h"
 #include "srsran/support/async/async_test_utils.h"
 #include "srsran/support/executors/manual_task_worker.h"
 #include <map>
@@ -46,7 +47,7 @@ public:
 
   bool full() const override { return false; }
 
-  uint32_t get_max_teids() override { return std::numeric_limits<uint32_t>::max(); }
+  uint32_t get_max_nof_teids() override { return std::numeric_limits<uint32_t>::max(); }
 
 private:
   uint32_t next_gtpu_teid = 0;
@@ -70,7 +71,6 @@ public:
   explicit dummy_cell_executor_mapper(task_executor& exec_) : exec(exec_) {}
   task_executor& executor(du_cell_index_t cell_index) override { return exec; }
   task_executor& slot_ind_executor(du_cell_index_t cell_index) override { return exec; }
-  task_executor& error_ind_executor(du_cell_index_t cell_index) override { return exec; }
 
   task_executor& exec;
 };
@@ -79,39 +79,22 @@ class dummy_f1c_bearer : public f1c_bearer
 {
 public:
   byte_buffer       last_rx_pdu;
-  byte_buffer_chain last_tx_sdu;
+  byte_buffer_chain last_tx_sdu = byte_buffer_chain::create().value();
 
-  void handle_pdu(byte_buffer pdu) override { last_rx_pdu = std::move(pdu); }
+  void             handle_pdu(byte_buffer pdu) override { last_rx_pdu = std::move(pdu); }
+  async_task<bool> handle_pdu_and_await_delivery(byte_buffer pdu, std::chrono::milliseconds timeout) override
+  {
+    last_rx_pdu = std::move(pdu);
+    return launch_no_op_task(true);
+  }
+  async_task<bool> handle_pdu_and_await_transmission(byte_buffer pdu, std::chrono::milliseconds timeout) override
+  {
+    last_rx_pdu = std::move(pdu);
+    return launch_no_op_task(true);
+  }
   void handle_sdu(byte_buffer_chain sdu) override { last_tx_sdu = std::move(sdu); }
-  void handle_transmit_notification(uint32_t highest_pdcp_sn) override {}
+  void handle_transmit_notification(uint32_t highest_pdcp_sn, uint32_t queue_free_bytes) override {}
   void handle_delivery_notification(uint32_t highest_pdcp_sn) override {}
-};
-
-class dummy_f1u_bearer : public f1u_bearer,
-                         public f1u_rx_pdu_handler,
-                         public f1u_tx_delivery_handler,
-                         public f1u_tx_sdu_handler
-{
-public:
-  nru_dl_message     last_msg;
-  optional<uint32_t> last_highest_transmitted_pdcp_sn;
-  optional<uint32_t> last_highest_delivered_pdcp_sn;
-  byte_buffer_chain  last_sdu;
-
-  f1u_rx_pdu_handler&      get_rx_pdu_handler() override { return *this; }
-  f1u_tx_delivery_handler& get_tx_delivery_handler() override { return *this; }
-  f1u_tx_sdu_handler&      get_tx_sdu_handler() override { return *this; }
-
-  void handle_pdu(nru_dl_message msg) override { last_msg = std::move(msg); }
-  void handle_transmit_notification(uint32_t highest_pdcp_sn) override
-  {
-    last_highest_transmitted_pdcp_sn = highest_pdcp_sn;
-  }
-  void handle_delivery_notification(uint32_t highest_pdcp_sn) override
-  {
-    last_highest_delivered_pdcp_sn = highest_pdcp_sn;
-  }
-  void handle_sdu(byte_buffer_chain sdu) override { last_sdu = std::move(sdu); }
 };
 
 class f1ap_test_dummy : public f1ap_connection_manager,
@@ -132,12 +115,13 @@ public:
   slotted_id_table<du_ue_index_t, f1ap_ue_context, MAX_NOF_DU_UES> f1ap_ues;
 
   wait_manual_event_tester<f1_setup_response_message>            wait_f1_setup;
-  optional<f1ap_ue_creation_request>                             last_ue_create;
+  wait_manual_event_tester<void>                                 wait_f1_removal;
+  std::optional<f1ap_ue_creation_request>                        last_ue_create;
   f1ap_ue_creation_response                                      next_ue_create_response;
-  optional<f1ap_ue_configuration_request>                        last_ue_config;
+  std::optional<f1ap_ue_configuration_request>                   last_ue_config;
   f1ap_ue_configuration_response                                 next_ue_config_response;
-  optional<du_ue_index_t>                                        last_ue_deleted;
-  optional<f1ap_ue_context_release_request>                      last_ue_release_req;
+  std::optional<du_ue_index_t>                                   last_ue_deleted;
+  std::optional<f1ap_ue_context_release_request>                 last_ue_release_req;
   wait_manual_event_tester<f1ap_ue_context_modification_confirm> wait_ue_mod;
 
   bool connect_to_cu_cp() override { return true; }
@@ -146,6 +130,8 @@ public:
   {
     return wait_f1_setup.launch();
   }
+
+  async_task<void> handle_f1_removal_request() override { return wait_f1_removal.launch(); }
 
   /// Initiates creation of UE context in F1.
   f1ap_ue_creation_response handle_ue_creation_request(const f1ap_ue_creation_request& msg) override
@@ -182,35 +168,21 @@ public:
   void handle_rrc_delivery_report(const f1ap_rrc_delivery_report_msg& report) override {}
 };
 
-class f1u_bearer_dummy : public f1u_bearer,
-                         public f1u_rx_pdu_handler,
-                         public f1u_tx_delivery_handler,
-                         public f1u_tx_sdu_handler
+class f1u_gw_bearer_dummy : public f1u_du_gateway_bearer
 {
 public:
-  srs_du::f1u_rx_sdu_notifier& du_rx;
+  srs_du::f1u_du_gateway_bearer_rx_notifier& du_rx;
 
-  optional<nru_dl_message> last_pdu;
-  optional<uint32_t>       last_highest_transmitted_pdcp_sn;
-  optional<uint32_t>       last_highest_delivered_pdcp_sn;
-  byte_buffer_chain        last_sdu;
+  std::optional<nru_ul_message> last_sdu;
 
-  f1u_bearer_dummy(srs_du::f1u_rx_sdu_notifier& du_rx_) : du_rx(du_rx_) {}
+  f1u_gw_bearer_dummy(srs_du::f1u_du_gateway_bearer_rx_notifier& du_rx_) : du_rx(du_rx_) {}
 
-  f1u_rx_pdu_handler&      get_rx_pdu_handler() override { return *this; }
-  f1u_tx_delivery_handler& get_tx_delivery_handler() override { return *this; }
-  f1u_tx_sdu_handler&      get_tx_sdu_handler() override { return *this; }
+  void stop() override {}
 
-  void handle_pdu(nru_dl_message msg) override { last_pdu = std::move(msg); }
-  void handle_transmit_notification(uint32_t highest_pdcp_sn) override
-  {
-    last_highest_transmitted_pdcp_sn = highest_pdcp_sn;
-  }
-  void handle_delivery_notification(uint32_t highest_pdcp_sn) override
-  {
-    last_highest_delivered_pdcp_sn = highest_pdcp_sn;
-  }
-  void handle_sdu(byte_buffer_chain sdu) override { last_sdu = std::move(sdu); }
+  void on_new_pdu(nru_ul_message msg) override { last_sdu = std::move(msg); }
+
+  // helper function to push DL PDUs to the RX path.
+  void on_new_sdu(nru_dl_message msg) { du_rx.on_new_pdu(std::move(msg)); }
 };
 
 class f1u_gateway_dummy : public f1u_du_gateway
@@ -218,18 +190,20 @@ class f1u_gateway_dummy : public f1u_du_gateway
 public:
   bool next_bearer_is_created = true;
 
-  srs_du::f1u_bearer* create_du_bearer(uint32_t                       ue_index,
-                                       drb_id_t                       drb_id,
-                                       srs_du::f1u_config             config,
-                                       const up_transport_layer_info& dl_tnl_info,
-                                       const up_transport_layer_info& ul_tnl_info,
-                                       srs_du::f1u_rx_sdu_notifier&   du_rx,
-                                       timer_factory                  timers) override
+  std::unique_ptr<f1u_du_gateway_bearer> create_du_bearer(uint32_t                                   ue_index,
+                                                          drb_id_t                                   drb_id,
+                                                          srs_du::f1u_config                         config,
+                                                          const up_transport_layer_info&             dl_up_tnl_info,
+                                                          const up_transport_layer_info&             ul_up_tnl_info,
+                                                          srs_du::f1u_du_gateway_bearer_rx_notifier& du_rx,
+                                                          timer_factory                              timers,
+                                                          task_executor& ue_executor) override
   {
-    if (next_bearer_is_created and f1u_bearers.count(dl_tnl_info) == 0) {
-      f1u_bearers.insert(std::make_pair(dl_tnl_info, std::map<up_transport_layer_info, f1u_bearer_dummy>{}));
-      f1u_bearers[dl_tnl_info].emplace(ul_tnl_info, du_rx);
-      return &f1u_bearers.at(dl_tnl_info).at(ul_tnl_info);
+    if (next_bearer_is_created and f1u_bearers.count(dl_up_tnl_info) == 0) {
+      auto f1u_bearer = std::make_unique<f1u_gw_bearer_dummy>(du_rx);
+      f1u_bearers.insert(std::make_pair(dl_up_tnl_info, std::map<up_transport_layer_info, f1u_gw_bearer_dummy*>{}));
+      f1u_bearers[dl_up_tnl_info].emplace(ul_up_tnl_info, f1u_bearer.get());
+      return f1u_bearer;
     }
     return nullptr;
   }
@@ -245,7 +219,19 @@ public:
     f1u_bearers.erase(bearer_it);
   }
 
-  std::map<up_transport_layer_info, std::map<up_transport_layer_info, f1u_bearer_dummy>> f1u_bearers;
+  expected<std::string> get_du_bind_address(gnb_du_id_t du_index) const override
+  {
+    if (f1u_ext_addr == "auto") {
+      return std::string("127.0.0.1");
+    }
+    return f1u_ext_addr;
+  }
+
+  std::map<up_transport_layer_info, std::map<up_transport_layer_info, f1u_gw_bearer_dummy*>> f1u_bearers;
+
+  void set_f1u_ext_addr(const std::string& addr) { f1u_ext_addr = addr; }
+
+  std::string f1u_ext_addr = "auto";
 };
 
 class mac_test_dummy : public mac_cell_manager,
@@ -265,11 +251,12 @@ public:
 
   mac_cell_dummy mac_cell;
 
-  optional<mac_ue_create_request>                           last_ue_create_msg{};
-  optional<mac_ue_reconfiguration_request>                  last_ue_reconf_msg{};
-  optional<mac_ue_delete_request>                           last_ue_delete_msg{};
-  optional<mac_dl_buffer_state_indication_message>          last_dl_bs;
+  std::optional<mac_ue_create_request>                      last_ue_create_msg{};
+  std::optional<mac_ue_reconfiguration_request>             last_ue_reconf_msg{};
+  std::optional<mac_ue_delete_request>                      last_ue_delete_msg{};
+  std::optional<mac_dl_buffer_state_indication_message>     last_dl_bs;
   byte_buffer                                               last_pushed_ul_ccch_msg;
+  std::optional<du_ue_index_t>                              last_ue_config_applied;
   wait_manual_event_tester<mac_ue_create_response>          wait_ue_create;
   wait_manual_event_tester<mac_ue_reconfiguration_response> wait_ue_reconf;
   wait_manual_event_tester<mac_ue_delete_response>          wait_ue_delete;
@@ -300,6 +287,7 @@ public:
     last_pushed_ul_ccch_msg = std::move(pdu);
     return next_ul_ccch_msg_result;
   }
+  void handle_ue_config_applied(du_ue_index_t ue_index) override { last_ue_config_applied = ue_index; }
 
   void handle_dl_buffer_state_update(const mac_dl_buffer_state_indication_message& dl_bs) override
   {
@@ -318,28 +306,31 @@ public:
     dummy_resource_updater(dummy_ue_resource_configurator_factory& parent_, du_ue_index_t ue_index_);
     ~dummy_resource_updater();
     du_ue_resource_update_response update(du_cell_index_t                       pcell_index,
-                                          const f1ap_ue_context_update_request& upd_req) override;
-    const cell_group_config&       get() override;
+                                          const f1ap_ue_context_update_request& upd_req,
+                                          const du_ue_resource_config*          reestablished_context) override;
+    const du_ue_resource_config&   get() override;
 
     du_ue_index_t                           ue_index;
     dummy_ue_resource_configurator_factory& parent;
   };
 
-  optional<du_ue_index_t>                    last_ue_index;
-  optional<du_cell_index_t>                  last_ue_pcell;
-  f1ap_ue_context_update_request             last_ue_ctx_upd;
-  std::map<du_ue_index_t, cell_group_config> ue_resource_pool;
-  cell_group_config                          next_context_update_result;
+  std::optional<du_ue_index_t>                   last_ue_index;
+  std::optional<du_cell_index_t>                 last_ue_pcell;
+  f1ap_ue_context_update_request                 last_ue_ctx_upd;
+  std::map<du_ue_index_t, du_ue_resource_config> ue_resource_pool;
+  du_ue_resource_config                          next_context_update_result;
+  du_ue_resource_update_response                 next_config_resp;
 
   dummy_ue_resource_configurator_factory();
 
-  ue_ran_resource_configurator create_ue_resource_configurator(du_ue_index_t   ue_index,
-                                                               du_cell_index_t pcell_index) override;
+  expected<ue_ran_resource_configurator, std::string>
+  create_ue_resource_configurator(du_ue_index_t ue_index, du_cell_index_t pcell_index) override;
 };
 
 f1ap_ue_context_update_request create_f1ap_ue_context_update_request(du_ue_index_t                   ue_idx,
                                                                      std::initializer_list<srb_id_t> srbs_to_addmod,
-                                                                     std::initializer_list<drb_id_t> drbs_to_addmod);
+                                                                     std::initializer_list<drb_id_t> drbs_to_add,
+                                                                     std::initializer_list<drb_id_t> drbs_to_mod = {});
 
 class du_manager_test_bench
 {

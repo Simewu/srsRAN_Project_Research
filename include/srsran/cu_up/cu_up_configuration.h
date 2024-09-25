@@ -22,11 +22,13 @@
 
 #pragma once
 
+#include "srsran/cu_up/cu_up_executor_pool.h"
 #include "srsran/e1ap/common/e1ap_common.h"
-#include "srsran/e1ap/cu_up/e1ap_connection_client.h"
 #include "srsran/e1ap/cu_up/e1ap_cu_up.h"
+#include "srsran/e1ap/gateways/e1_connection_client.h"
 #include "srsran/f1u/cu_up/f1u_gateway.h"
 #include "srsran/gtpu/gtpu_config.h"
+#include "srsran/gtpu/ngu_gateway.h"
 #include "srsran/pcap/dlt_pcap.h"
 #include "srsran/support/executors/task_executor.h"
 #include "srsran/support/timers.h"
@@ -45,14 +47,28 @@ struct network_interface_config {
   /// Local IP address to bind for connection from UPF to receive downlink user-plane traffic (N3 interface).
   std::string n3_bind_addr = "127.0.1.1";
 
+  /// External IP address that is advertised to receive GTP-U packets from UPF via N3 interface.
+  /// It defaults to \c n3_bind_addr but may differ in case the CU-UP is behind a NAT.
+  std::string n3_ext_addr = "auto";
+
+  /// Interface name to bind the N3. `auto` does not force a specific interface and uses a normal `bind()`.
+  std::string n3_bind_interface = "auto";
+
   /// Local port to bind for connection from UPF to receive downlink user-plane traffic (N3 interface).
   int n3_bind_port = GTPU_PORT; // TS 29.281 Sec. 4.4.2.3 Encapsulated T-PDUs
 
   /// Maximum amount of packets received in a single syscall.
   int n3_rx_max_mmsg = 256;
 
+  /// Pool occupancy threshold after which we drop packets.
+  float pool_threshold = 0.9;
+
   /// Local IP address to bind for connection from DU to receive uplink user-plane traffic.
   std::string f1u_bind_addr = "127.0.2.1";
+
+  /// External IP address that is advertised to receive NR-U packets from the DU.
+  /// It defaults to \c f1u_bind_addr but may differ in case the CU-UP is behind a NAT.
+  std::string f1u_ext_addr = "auto";
 
   /// Local port to bind for connection from DU to receive uplink user-plane traffic.
   int f1u_bind_port = GTPU_PORT;
@@ -64,27 +80,35 @@ struct n3_interface_config {
 };
 
 struct e1ap_config_params {
-  e1ap_connection_client*  e1ap_conn_client = nullptr;
-  e1ap_connection_manager* e1ap_conn_mng    = nullptr;
+  e1_connection_client*    e1_conn_client = nullptr;
+  e1ap_connection_manager* e1ap_conn_mng  = nullptr;
+};
+
+struct cu_up_test_mode_config {
+  bool     enabled           = false;
+  bool     integrity_enabled = true;
+  bool     ciphering_enabled = true;
+  uint16_t nea_algo          = 2;
+  uint16_t nia_algo          = 2;
 };
 
 /// Configuration passed to CU-UP.
 struct cu_up_configuration {
-  task_executor*     ctrl_executor  = nullptr; ///< CU-UP executor for control
-  task_executor*     dl_executor    = nullptr; ///< CU-UP executor for DL data flow
-  task_executor*     ul_executor    = nullptr; ///< CU-UP executor for UL data flow
-  task_executor*     io_ul_executor = nullptr; ///< CU-UP executor for UL data IO
-  task_executor*     cu_up_e2_exec  = nullptr;
-  e1ap_config_params e1ap;
-  f1u_cu_up_gateway* f1u_gateway  = nullptr;
-  io_broker*         epoll_broker = nullptr; ///< IO broker to receive messages from a network gateway
-  timer_manager*     timers       = nullptr;
-  dlt_pcap*          gtpu_pcap    = nullptr;
+  cu_up_executor_pool* ue_exec_pool   = nullptr;
+  task_executor*       ctrl_executor  = nullptr; ///< CU-UP executor for control
+  task_executor*       io_ul_executor = nullptr; ///< CU-UP executor for UL data IO
+  task_executor*       cu_up_e2_exec  = nullptr;
+  e1ap_config_params   e1ap;
+  f1u_cu_up_gateway*   f1u_gateway = nullptr;
+  ngu_gateway*         ngu_gw      = nullptr;
+  timer_manager*       timers      = nullptr;
+  dlt_pcap*            gtpu_pcap   = nullptr;
 
   std::map<five_qi_t, cu_up_qos_config> qos; // 5QI as key
 
   network_interface_config net_cfg;
   n3_interface_config      n3_cfg;
+  cu_up_test_mode_config   test_mode_cfg;
 
   unsigned    cu_up_id   = 0;
   std::string cu_up_name = "srs_cu_up_01";
@@ -108,8 +132,7 @@ struct formatter<srsran::srs_cu_up::network_interface_config> {
   }
 
   template <typename FormatContext>
-  auto format(srsran::srs_cu_up::network_interface_config cfg, FormatContext& ctx)
-      -> decltype(std::declval<FormatContext>().out())
+  auto format(const srsran::srs_cu_up::network_interface_config& cfg, FormatContext& ctx)
   {
     return format_to(ctx.out(),
                      "upf_port={}, n3_bind_addr={}, n3_bind_port={}, f1u_bind_addr={}, f1u_bind_port={}",

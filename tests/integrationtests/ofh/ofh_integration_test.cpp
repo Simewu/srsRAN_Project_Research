@@ -20,7 +20,7 @@
  *
  */
 
-#include "../../../lib/phy/support/resource_grid_impl.h"
+#include "helpers.h"
 #include "srsran/adt/bounded_bitset.h"
 #include "srsran/adt/circular_map.h"
 #include "srsran/ofh/ecpri/ecpri_constants.h"
@@ -28,6 +28,9 @@
 #include "srsran/ofh/ethernet/ethernet_gateway.h"
 #include "srsran/ofh/ethernet/ethernet_receiver.h"
 #include "srsran/phy/support/resource_grid_context.h"
+#include "srsran/phy/support/resource_grid_writer.h"
+#include "srsran/phy/support/shared_resource_grid.h"
+#include "srsran/phy/support/support_factories.h"
 #include "srsran/ru/ru_controller.h"
 #include "srsran/ru/ru_downlink_plane.h"
 #include "srsran/ru/ru_error_notifier.h"
@@ -39,6 +42,7 @@
 #include <arpa/inet.h>
 #include <getopt.h>
 #include <linux/if_packet.h>
+#include <mutex>
 #include <net/if.h>
 #include <netinet/ether.h>
 #include <random>
@@ -51,9 +55,16 @@ using namespace std::chrono_literals;
 /// Random generator.
 static std::mt19937 rgen(0);
 
-/// Static test parameters.
-static const du_tx_window_timing_parameters tx_window_timing_params{470us, 258us, 300us, 285us, 350us, 50us};
-static const du_rx_window_timing_parameters rx_window_timing_params{150us, 25us};
+/// Transmission window parameters expressed in symbols, given the 30kHz scs.
+unsigned T1a_max_cp_dl = 13; // 470us.
+unsigned T1a_min_cp_dl = 8;  // 258us.
+unsigned T1a_max_cp_ul = 8;  // 300us.
+unsigned T1a_min_cp_ul = 8;  // 285us.
+unsigned T1a_max_up    = 9;  // 350us.
+unsigned T1a_min_up    = 2;  // 50us.
+/// Reception window parameters expressed in symbols, given the 30kHz scs.
+unsigned Ta4_min = 1;  // 35us.
+unsigned Ta4_max = 28; // 1ms.
 
 static const tdd_ul_dl_pattern tdd_pattern_7d2u{10, 7, 0, 2, 0};
 static const tdd_ul_dl_pattern tdd_pattern_6d3u{10, 6, 0, 3, 0};
@@ -74,27 +85,27 @@ namespace {
 
 /// User-defined test parameters.
 struct test_parameters {
-  bool                     silent                              = false;
-  std::string              log_level                           = "info";
-  std::string              log_filename                        = "stdout";
-  bool                     is_prach_control_plane_enabled      = true;
-  bool                     is_downlink_broadcast_enabled       = false;
-  bool                     ignore_ecpri_payload_size_field     = false;
-  std::string              data_compr_method                   = "bfp";
-  unsigned                 data_bitwidth                       = 9;
-  std::string              prach_compr_method                  = "bfp";
-  unsigned                 prach_bitwidth                      = 9;
-  bool                     is_downlink_static_comp_hdr_enabled = false;
-  bool                     is_uplink_static_comp_hdr_enabled   = false;
-  bool                     is_downlink_parallelized            = true;
-  units::bytes             mtu                                 = units::bytes(9000);
-  std::vector<unsigned>    prach_port_id                       = {4, 5};
-  std::vector<unsigned>    dl_port_id                          = {0, 1, 2, 3};
-  std::vector<unsigned>    ul_port_id                          = {0, 1};
-  bs_channel_bandwidth_fr1 bw                                  = srsran::bs_channel_bandwidth_fr1::MHz20;
-  subcarrier_spacing       scs                                 = subcarrier_spacing::kHz30;
-  std::string              tdd_pattern_str                     = "7d2u";
-  bool                     use_loopback_receiver               = false;
+  bool                  silent                              = false;
+  srslog::basic_levels  log_level                           = srslog::basic_levels::info;
+  std::string           log_filename                        = "stdout";
+  bool                  is_prach_control_plane_enabled      = true;
+  bool                  is_downlink_broadcast_enabled       = false;
+  bool                  ignore_ecpri_payload_size_field     = false;
+  std::string           data_compr_method                   = "bfp";
+  unsigned              data_bitwidth                       = 9;
+  std::string           prach_compr_method                  = "bfp";
+  unsigned              prach_bitwidth                      = 9;
+  bool                  is_downlink_static_comp_hdr_enabled = false;
+  bool                  is_uplink_static_comp_hdr_enabled   = false;
+  bool                  is_downlink_parallelized            = true;
+  units::bytes          mtu                                 = units::bytes(9000);
+  std::vector<unsigned> prach_port_id                       = {4, 5};
+  std::vector<unsigned> dl_port_id                          = {0, 1, 2, 3};
+  std::vector<unsigned> ul_port_id                          = {0, 1};
+  bs_channel_bandwidth  bw                                  = srsran::bs_channel_bandwidth::MHz20;
+  subcarrier_spacing    scs                                 = subcarrier_spacing::kHz30;
+  std::string           tdd_pattern_str                     = "7d2u";
+  bool                  use_loopback_receiver               = false;
 };
 
 /// Dummy Radio Unit error notifier.
@@ -106,39 +117,6 @@ public:
 } // namespace
 
 static test_parameters test_params;
-
-/// Helper function to convert array of port indexes to string.
-static std::string port_ids_to_str(span<unsigned> ports)
-{
-  std::stringstream ss;
-  ss << "{";
-  for (unsigned i = 0, e = ports.size() - 1; i != e; ++i) {
-    ss << ports[i] << ", ";
-  }
-  ss << ports[ports.size() - 1] << "}";
-  return ss.str();
-}
-
-/// Helper function to parse list of ports provided as a string.
-static std::vector<unsigned> parse_port_id(const std::string& port_id_str)
-{
-  std::vector<unsigned> port_ids;
-  size_t                start_pos = port_id_str.find('{');
-  size_t                end_pos   = port_id_str.find('}');
-  if (start_pos == std::string::npos || end_pos == std::string::npos) {
-    return port_ids;
-  }
-  std::string       ports_comma_separated = port_id_str.substr(start_pos + 1, end_pos - 1);
-  std::stringstream ss(ports_comma_separated);
-  int               port;
-  while (ss >> port) {
-    port_ids.push_back(port);
-    if (ss.peek() == ',' || ss.peek() == ' ') {
-      ss.ignore();
-    }
-  }
-  return port_ids;
-}
 
 /// Prints usage information of the app.
 static void usage(const char* prog)
@@ -172,55 +150,6 @@ static void usage(const char* prog)
   fmt::print("\t-v Logging level. [Default {}]\n", test_params.log_level);
   fmt::print("\t-f Log file name. [Default {}]\n", test_params.log_filename);
   fmt::print("\t-h Show this message\n");
-}
-
-/// Validates the bandwidth argument provided as a user input.
-static bool validate_bw(unsigned bandwidth)
-{
-  switch (bandwidth) {
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz5):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz5;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz10):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz10;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz15):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz15;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz20):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz20;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz25):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz25;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz30):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz30;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz40):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz40;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz50):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz50;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz60):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz60;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz70):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz70;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz80):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz80;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz90):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz90;
-      break;
-    case bs_channel_bandwidth_to_MHz(bs_channel_bandwidth_fr1::MHz100):
-      test_params.bw = bs_channel_bandwidth_fr1::MHz100;
-      break;
-    default:
-      return false;
-  }
-  return true;
 }
 
 /// Parses arguments of the app.
@@ -260,9 +189,11 @@ static void parse_args(int argc, char** argv)
         break;
       case 'w':
         if (optarg != nullptr) {
-          if (!validate_bw(std::strtol(optarg, nullptr, 10))) {
+          if (!is_valid_bw(std::strtol(optarg, nullptr, 10))) {
             fmt::print("Invalid bandwidth\n");
             invalid_arg = true;
+          } else {
+            test_params.bw = MHz_to_bs_channel_bandwidth(std::strtol(optarg, nullptr, 10));
           }
         }
         break;
@@ -322,9 +253,11 @@ static void parse_args(int argc, char** argv)
       case 's':
         test_params.silent = (!test_params.silent);
         break;
-      case 'v':
-        test_params.log_level = std::string(optarg);
+      case 'v': {
+        auto value            = srslog::str_to_basic_level(std::string(optarg));
+        test_params.log_level = value.has_value() ? value.value() : srslog::basic_levels::none;
         break;
+      }
       case 'f':
         test_params.log_filename = std::string(optarg);
         break;
@@ -347,7 +280,7 @@ namespace {
 class dummy_frame_notifier : public ether::frame_notifier
 {
   // See interface for documentation.
-  void on_new_frame(span<const uint8_t> payload) override{};
+  void on_new_frame(ether::unique_rx_buffer buffer) override{};
 };
 dummy_frame_notifier dummy_notifier;
 
@@ -370,6 +303,19 @@ public:
 protected:
   srslog::basic_logger&                         logger;
   std::reference_wrapper<ether::frame_notifier> notifier;
+};
+
+/// Dummy Ethernet receive buffer.
+class dummy_eth_rx_buffer : public ether::rx_buffer
+{
+public:
+  /// Constructor receive a view on external data buffer managed by \c dummy_eth_receiver.
+  explicit dummy_eth_rx_buffer(span<const uint8_t> data_span_) { data_span = data_span_; }
+
+  span<const uint8_t> data() const override { return data_span; };
+
+private:
+  span<const uint8_t> data_span;
 };
 
 /// Dummy Ethernet receiver that receives data from RU emulator and pushes them to the OFH receiver without using real
@@ -406,7 +352,9 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         read_pos = (read_pos + 1) % QUEUE_SIZE;
       }
-      notifier.get().on_new_frame(span<const uint8_t>(queue[read_pos].data(), queue[read_pos].size()));
+      ether::unique_rx_buffer buffer(
+          dummy_eth_rx_buffer{span<const uint8_t>(queue[read_pos].data(), queue[read_pos].size())});
+      notifier.get().on_new_frame(std::move(buffer));
     })) {
       std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
@@ -470,13 +418,13 @@ class dummy_rx_symbol_notifier : public ru_uplink_plane_rx_symbol_notifier
 {
 public:
   // See interface for documentation.
-  void on_new_uplink_symbol(const ru_uplink_rx_symbol_context& context, const resource_grid_reader& grid) override {}
+  void on_new_uplink_symbol(const ru_uplink_rx_symbol_context& context, const shared_resource_grid& grid) override
+  {
+    srsran_assert(grid, "Invalid grid.");
+  }
 
   // See interface for documentation.
   void on_new_prach_window_data(const prach_buffer_context& context, const prach_buffer& buffer) override {}
-
-  // See interface for documentation.
-  void on_rx_srs_symbol(const ru_uplink_rx_symbol_context& context) override {}
 };
 
 /// Dummy RU notifier class for timing events.
@@ -725,13 +673,19 @@ public:
   {
     std::uniform_real_distribution<float> dist(-1.0, +1.0);
 
+    std::shared_ptr<channel_precoder_factory> precoder_factory = create_channel_precoder_factory("auto");
+    report_fatal_error_if_not(precoder_factory, "Invalid factory");
+
+    std::shared_ptr<resource_grid_factory> rg_factory = create_resource_grid_factory(precoder_factory);
+    report_fatal_error_if_not(rg_factory, "Invalid factory");
+
     // Create resource grids according to TDD pattern.
+    std::vector<std::unique_ptr<resource_grid>> dl_resource_grids;
     for (unsigned rg_id = 0; rg_id != tdd_pattern.nof_dl_slots; rg_id++) {
       // Downlink.
-      dl_resource_grids.push_back(std::make_unique<resource_grid_impl>(
-          nof_antennas_dl, get_nsymb_per_slot(cyclic_prefix::NORMAL), nof_prb * NOF_SUBCARRIERS_PER_RB, nullptr));
-      resource_grid_impl&   grid      = *dl_resource_grids.back();
-      resource_grid_writer& rg_writer = grid.get_writer();
+      dl_resource_grids.push_back(
+          rg_factory->create(nof_antennas_dl, MAX_NSYMB_PER_SLOT, nof_prb * NOF_SUBCARRIERS_PER_RB));
+      resource_grid_writer& rg_writer = dl_resource_grids.back()->get_writer();
 
       // Pre-generate random downlink data.
       for (unsigned sym = 0; sym != get_nsymb_per_slot(cyclic_prefix::NORMAL); ++sym) {
@@ -742,18 +696,24 @@ public:
         }
       }
     }
+    dl_rg_pool = create_generic_resource_grid_pool(std::move(dl_resource_grids));
+
     // Uplink.
+    std::vector<std::unique_ptr<resource_grid>> ul_resource_grids;
     for (unsigned rg_id = 0; rg_id != tdd_pattern.nof_ul_slots; rg_id++) {
-      ul_resource_grids.push_back(std::make_unique<resource_grid_impl>(
-          nof_antennas_ul, get_nsymb_per_slot(cyclic_prefix::NORMAL), nof_prb * NOF_SUBCARRIERS_PER_RB, nullptr));
+      ul_resource_grids.push_back(
+          rg_factory->create(nof_antennas_ul, MAX_NSYMB_PER_SLOT, nof_prb * NOF_SUBCARRIERS_PER_RB));
     }
+    ul_rg_pool = create_generic_resource_grid_pool(std::move(ul_resource_grids));
   }
 
   /// Starts the DU emulator.
   void start()
   {
     slot_point slot(0, to_numerology_value(test_params.scs));
-    slot_duration_us = std::chrono::microseconds(1000 * SUBFRAME_DURATION_MSEC / slot.nof_slots_per_subframe());
+    slot_duration_us   = std::chrono::microseconds(1000 * SUBFRAME_DURATION_MSEC / slot.nof_slots_per_subframe());
+    symbol_duration_us = std::chrono::microseconds(static_cast<unsigned>(
+        std::ceil(1e3 / (get_nsymb_per_slot(cyclic_prefix::NORMAL) * get_nof_slots_per_subframe(test_params.scs)))));
     if (!executor.execute([this]() { run_test(); })) {
       report_fatal_error("Failed to start DU emulator");
     }
@@ -774,9 +734,16 @@ private:
 
       // Push downlink data.
       if (is_dl_slot) {
-        resource_grid_impl&   grid = *dl_resource_grids[slot_id];
         resource_grid_context context{slot, 0};
-        dl_handler.handle_dl_data(context, grid.get_reader());
+        shared_resource_grid  dl_grid;
+        while (!dl_grid) {
+          dl_grid = dl_rg_pool->allocate_resource_grid(context);
+          if (!dl_grid) {
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
+          }
+        }
+
+        dl_handler.handle_dl_data(context, dl_grid);
         logger.info("DU emulator pushed DL data in slot {}", slot);
       }
 
@@ -784,7 +751,15 @@ private:
       if (is_ul_slot) {
         slot_id = tdd_pattern.dl_ul_tx_period_nof_slots - slot_id - 1;
         resource_grid_context context{slot, 0};
-        ul_handler.handle_new_uplink_slot(context, *ul_resource_grids[slot_id]);
+        shared_resource_grid  ul_grid;
+        while (!ul_grid) {
+          ul_grid = ul_rg_pool->allocate_resource_grid(context);
+          if (!ul_grid) {
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
+          }
+        }
+
+        ul_handler.handle_new_uplink_slot(context, ul_grid);
       }
 
       // Sleep until the end of the slot.
@@ -794,20 +769,21 @@ private:
       slot_val = (++slot).to_uint();
     }
     // Leave time fo the uplink slots to be processed.
-    auto proc_time = processing_delay_slots * slot_duration_us + tx_window_timing_params.T1a_max_cp_ul + 100ms;
+    auto proc_time = processing_delay_slots * slot_duration_us + (T1a_max_cp_ul * symbol_duration_us) + 100ms;
     std::this_thread::sleep_for(proc_time);
     test_finished.store(true, std::memory_order_relaxed);
   }
 
-  srslog::basic_logger&                            logger;
-  std::vector<std::unique_ptr<resource_grid_impl>> dl_resource_grids;
-  std::vector<std::unique_ptr<resource_grid_impl>> ul_resource_grids;
-  task_executor&                                   executor;
-  ru_downlink_plane_handler&                       dl_handler;
-  ru_uplink_plane_handler&                         ul_handler;
+  srslog::basic_logger&               logger;
+  std::unique_ptr<resource_grid_pool> dl_rg_pool;
+  std::unique_ptr<resource_grid_pool> ul_rg_pool;
+  task_executor&                      executor;
+  ru_downlink_plane_handler&          dl_handler;
+  ru_uplink_plane_handler&            ul_handler;
 
   const unsigned            nof_prb;
   std::chrono::microseconds slot_duration_us;
+  std::chrono::microseconds symbol_duration_us;
   std::atomic<bool>         test_finished{false};
 };
 
@@ -987,9 +963,9 @@ struct worker_manager {
       const std::string exec_name = "ru_rx_exec";
 
       const single_worker ru_worker{name,
-                                    {concurrent_queue_policy::lockfree_spsc, task_worker_queue_size},
+                                    {concurrent_queue_policy::locking_mpmc, task_worker_queue_size},
                                     {{exec_name}},
-                                    std::chrono::microseconds{1},
+                                    std::nullopt,
                                     os_thread_realtime_priority::max() - 1};
       if (!exec_mng.add_execution_context(create_execution_context(ru_worker))) {
         report_fatal_error("Failed to instantiate {} execution context", ru_worker.name);
@@ -1045,19 +1021,24 @@ static void configure_ofh_sector(ru_ofh_sector_configuration& sector_cfg)
   // Default IQ data scaling to be applied prior to downlink data compression.
   const float iq_scaling = 0.9f;
 
+  std::chrono::duration<double, std::nano> symbol_duration(
+      (1e6 / (get_nsymb_per_slot(cyclic_prefix::NORMAL) * get_nof_slots_per_subframe(test_params.scs))));
+
   sector_cfg.interface                       = "lo";
   sector_cfg.mac_src_address                 = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   sector_cfg.mac_dst_address                 = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   sector_cfg.mtu_size                        = test_params.mtu;
-  sector_cfg.tci                             = vlan_tag;
+  sector_cfg.tci_cp                          = vlan_tag;
+  sector_cfg.tci_up                          = vlan_tag;
   sector_cfg.scs                             = test_params.scs;
   sector_cfg.bw                              = test_params.bw;
   sector_cfg.cp                              = cyclic_prefix::NORMAL;
   sector_cfg.is_prach_control_plane_enabled  = test_params.is_prach_control_plane_enabled;
   sector_cfg.ignore_ecpri_payload_size_field = test_params.ignore_ecpri_payload_size_field;
-  sector_cfg.tx_window_timing_params         = tx_window_timing_params;
-  sector_cfg.rx_window_timing_params         = rx_window_timing_params;
-  sector_cfg.is_downlink_broadcast_enabled   = test_params.is_downlink_broadcast_enabled;
+  sector_cfg.tx_window_timing_params         = {
+              T1a_max_cp_dl, T1a_min_cp_dl, T1a_max_cp_ul, T1a_min_cp_ul, T1a_max_up, T1a_min_up};
+  sector_cfg.rx_window_timing_params       = {Ta4_min, Ta4_max};
+  sector_cfg.is_downlink_broadcast_enabled = test_params.is_downlink_broadcast_enabled;
 
   // Configure compression
   ru_compression_params dl_ul_compression_params{to_compression_type(test_params.data_compr_method),
@@ -1113,11 +1094,11 @@ static ru_ofh_dependencies generate_ru_dependencies(srslog::basic_logger&       
   dependencies.error_notifier     = &error_notifier;
 
   dependencies.sector_dependencies.emplace_back();
-  auto& sector_deps                = dependencies.sector_dependencies.back();
-  sector_deps.logger               = &logger;
-  sector_deps.downlink_executor    = workers.ru_dl_exec;
-  sector_deps.receiver_executor    = workers.ru_rx_exec;
-  sector_deps.transmitter_executor = workers.ru_tx_exec;
+  auto& sector_deps             = dependencies.sector_dependencies.back();
+  sector_deps.logger            = &logger;
+  sector_deps.downlink_executor = workers.ru_dl_exec;
+  sector_deps.uplink_executor   = workers.ru_rx_exec;
+  sector_deps.txrx_executor     = workers.ru_tx_exec;
 
   // Configure Ethernet gateway.
   auto gateway            = std::make_unique<test_gateway>();
@@ -1147,7 +1128,7 @@ int main(int argc, char** argv)
   srslog::init();
 
   srslog::basic_logger& logger = srslog::fetch_basic_logger("OFH_TEST", false);
-  logger.set_level(srslog::str_to_basic_level(test_params.log_level));
+  logger.set_level(test_params.log_level);
 
   unsigned nof_prb = get_max_Nprb(bs_channel_bandwidth_to_MHz(test_params.bw), test_params.scs, frequency_range::FR1);
 

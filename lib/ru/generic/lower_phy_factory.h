@@ -35,6 +35,12 @@ class task_executor;
 inline std::shared_ptr<lower_phy_factory> create_lower_phy_factory(lower_phy_configuration& config,
                                                                    unsigned max_nof_prach_concurrent_requests)
 {
+  // Deduce frequency range from the subcarrier spacing.
+  frequency_range fr = frequency_range::FR1;
+  if (config.scs > subcarrier_spacing::kHz60) {
+    fr = frequency_range::FR2;
+  }
+
   // Get the maximum number of receive ports.
   unsigned max_nof_rx_ports =
       std::max_element(config.sectors.begin(),
@@ -65,7 +71,7 @@ inline std::shared_ptr<lower_phy_factory> create_lower_phy_factory(lower_phy_con
 
   // Create OFDM PRACH demodulator factory.
   std::shared_ptr<ofdm_prach_demodulator_factory> prach_demodulator_factory =
-      create_ofdm_prach_demodulator_factory_sw(dft_factory, config.srate);
+      create_ofdm_prach_demodulator_factory_sw(dft_factory, config.srate, fr);
   report_fatal_error_if_not(prach_demodulator_factory, "Failed to create PRACH demodulator factory.");
 
   // Create PDxCH processor factory.
@@ -89,7 +95,7 @@ inline std::shared_ptr<lower_phy_factory> create_lower_phy_factory(lower_phy_con
 
   // Create amplitude control factory.
   std::shared_ptr<amplitude_controller_factory> amplitude_control_factory;
-  if (config.logger->debug.enabled() || config.amplitude_config.enable_clipping) {
+  if (config.amplitude_config.enable_clipping) {
     amplitude_control_factory = create_amplitude_controller_clipping_factory(config.amplitude_config);
   } else {
     amplitude_control_factory = create_amplitude_controller_scaling_factory(config.amplitude_config.input_gain_dB);

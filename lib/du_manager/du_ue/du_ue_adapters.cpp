@@ -24,6 +24,7 @@
 #include "srsran/f1u/du/f1u_bearer.h"
 #include "srsran/rlc/rlc_rx.h"
 #include "srsran/rlc/rlc_tx.h"
+#include "srsran/support/async/async_no_op_task.h"
 
 using namespace srsran;
 using namespace srs_du;
@@ -31,8 +32,16 @@ using namespace srs_du;
 class null_sink_f1c_bearer : public f1c_bearer
 {
 public:
-  void handle_pdu(byte_buffer pdu) override {}
-  void handle_transmit_notification(uint32_t highest_pdcp_sn) override {}
+  void             handle_pdu(byte_buffer pdu) override {}
+  async_task<bool> handle_pdu_and_await_delivery(byte_buffer pdu, std::chrono::milliseconds timeout) override
+  {
+    return launch_no_op_task(true);
+  }
+  async_task<bool> handle_pdu_and_await_transmission(byte_buffer pdu, std::chrono::milliseconds timeout) override
+  {
+    return launch_no_op_task(true);
+  }
+  void handle_transmit_notification(uint32_t highest_pdcp_sn, uint32_t queue_bytes_free) override {}
   void handle_delivery_notification(uint32_t highest_pdcp_sn) override {}
   void handle_sdu(byte_buffer_chain sdu) override {}
 } null_f1c_bearer;
@@ -49,15 +58,18 @@ public:
   f1u_tx_sdu_handler&      get_tx_sdu_handler() override { return *this; }
 
   void handle_pdu(nru_dl_message msg) override {}
-  void handle_transmit_notification(uint32_t highest_pdcp_sn) override {}
+  void handle_transmit_notification(uint32_t highest_pdcp_sn, uint32_t queue_bytes_free) override {}
   void handle_delivery_notification(uint32_t highest_pdcp_sn) override {}
+  void handle_retransmit_notification(uint32_t highest_pdcp_sn) override {}
+  void handle_delivery_retransmitted_notification(uint32_t highest_pdcp_sn) override {}
   void handle_sdu(byte_buffer_chain sdu) override {}
+  void stop() override {}
 } null_f1u_bearer;
 
 class null_sink_rlc_bearer : public rlc_tx_upper_layer_data_interface, public rlc_rx_lower_layer_interface
 {
 public:
-  void handle_sdu(rlc_sdu sdu) override {}
+  void handle_sdu(byte_buffer sdu_buf, bool is_retx) override {}
   void discard_sdu(uint32_t pdcp_sn) override {}
   void handle_pdu(byte_buffer_slice pdu) override {}
 } null_rlc_bearer;
@@ -65,6 +77,11 @@ public:
 void f1c_rx_sdu_rlc_adapter::disconnect()
 {
   connect(null_rlc_bearer);
+}
+
+void f1u_gateway_nru_rx_adapter::disconnect()
+{
+  connect(null_f1u_bearer);
 }
 
 void f1u_rx_rlc_sdu_adapter::disconnect()

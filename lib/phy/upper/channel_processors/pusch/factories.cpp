@@ -23,12 +23,15 @@
 #include "srsran/phy/upper/channel_processors/pusch/factories.h"
 #include "logging_pusch_processor_decorator.h"
 #include "pusch_codeblock_decoder.h"
+#include "pusch_decoder_empty_impl.h"
 #include "pusch_decoder_hw_impl.h"
 #include "pusch_decoder_impl.h"
 #include "pusch_demodulator_impl.h"
 #include "pusch_processor_impl.h"
 #include "pusch_processor_pool.h"
+#include "pusch_processor_validator_impl.h"
 #include "ulsch_demultiplex_impl.h"
+#include "srsran/phy/generic_functions/transform_precoding/transform_precoding_factories.h"
 #include "srsran/phy/upper/channel_modulation/channel_modulation_factories.h"
 #include "srsran/phy/upper/channel_processors/pusch/pusch_processor_result_notifier.h"
 #include "srsran/phy/upper/sequence_generators/sequence_generator_factories.h"
@@ -37,6 +40,30 @@
 using namespace srsran;
 
 namespace {
+
+/// \brief Factory for empty PUSCH decoders.
+///
+/// It creates \ref pusch_decoder_empty_impl instances.
+class pusch_decoder_factory_empty : public pusch_decoder_factory
+{
+public:
+  /// Constructs a factory taking the maximum number of PRB and layers.
+  pusch_decoder_factory_empty(unsigned nof_prb_, unsigned nof_layers_) : nof_prb(nof_prb_), nof_layers(nof_layers_)
+  {
+    srsran_assert(nof_prb > 0, "Invalid number of PRB.");
+    srsran_assert(nof_layers > 0, "Invalid number of layers.");
+  }
+
+  // See interface for documentation.
+  std::unique_ptr<pusch_decoder> create() override
+  {
+    return std::make_unique<pusch_decoder_empty_impl>(nof_prb, nof_layers);
+  }
+
+private:
+  unsigned nof_prb;
+  unsigned nof_layers;
+};
 
 class pusch_decoder_factory_generic : public pusch_decoder_factory
 {
@@ -92,20 +119,25 @@ private:
 /// HW-accelerated PUSCH decoder factory.
 class pusch_decoder_factory_hw : public pusch_decoder_factory
 {
-private:
-  std::shared_ptr<ldpc_segmenter_rx_factory>             segmenter_factory;
-  std::shared_ptr<crc_calculator_factory>                crc_factory;
-  std::shared_ptr<hal::hw_accelerator_pusch_dec_factory> hw_decoder_factory;
-
 public:
   explicit pusch_decoder_factory_hw(const pusch_decoder_factory_hw_configuration& config) :
     segmenter_factory(std::move(config.segmenter_factory)),
     crc_factory(std::move(config.crc_factory)),
-    hw_decoder_factory(std::move(config.hw_decoder_factory))
+    executor(config.executor)
   {
     srsran_assert(segmenter_factory, "Invalid LDPC segmenter factory.");
     srsran_assert(crc_factory, "Invalid CRC factory.");
-    srsran_assert(hw_decoder_factory, "Invalid hardware accelerator factory.");
+    srsran_assert(config.hw_decoder_factory, "Invalid hardware accelerator factory.");
+
+    // Creates a vector of hardware decoders. These are shared for all the PUSCH decoders.
+    std::vector<std::unique_ptr<hal::hw_accelerator_pusch_dec>> hw_decoders(
+        std::max(1U, config.nof_pusch_decoder_threads));
+    for (std::unique_ptr<hal::hw_accelerator_pusch_dec>& hw_decoder : hw_decoders) {
+      hw_decoder = config.hw_decoder_factory->create();
+    }
+
+    // Creates the hardware decoder pool. The pool is common among all the PUSCH decoders.
+    hw_decoder_pool = std::make_unique<pusch_decoder_hw_impl::hw_decoder_pool>(std::move(hw_decoders));
   }
 
   std::unique_ptr<pusch_decoder> create() override
@@ -115,8 +147,14 @@ public:
         crc_factory->create(crc_generator_poly::CRC24A),
         crc_factory->create(crc_generator_poly::CRC24B),
     };
-    return std::make_unique<pusch_decoder_hw_impl>(segmenter_factory->create(), crc, hw_decoder_factory->create());
+    return std::make_unique<pusch_decoder_hw_impl>(segmenter_factory->create(), crc, hw_decoder_pool, executor);
   }
+
+private:
+  std::shared_ptr<ldpc_segmenter_rx_factory>              segmenter_factory;
+  std::shared_ptr<crc_calculator_factory>                 crc_factory;
+  std::shared_ptr<pusch_decoder_hw_impl::hw_decoder_pool> hw_decoder_pool;
+  task_executor*                                          executor;
 };
 
 class pusch_demodulator_factory_generic : public pusch_demodulator_factory
@@ -129,32 +167,41 @@ public:
       evm_calc = demodulation_factory->create_evm_calculator();
     }
     return std::make_unique<pusch_demodulator_impl>(equalizer_factory->create(),
+                                                    precoder_factory->create(),
                                                     demodulation_factory->create_demodulation_mapper(),
                                                     std::move(evm_calc),
                                                     prg_factory->create(),
+                                                    max_nof_prb,
                                                     enable_post_eq_sinr);
   }
 
   pusch_demodulator_factory_generic(std::shared_ptr<channel_equalizer_factory>       equalizer_factory_,
+                                    std::shared_ptr<transform_precoder_factory>      precoder_factory_,
                                     std::shared_ptr<channel_modulation_factory>      demodulation_factory_,
                                     std::shared_ptr<pseudo_random_generator_factory> prg_factory_,
+                                    unsigned                                         max_nof_prb_,
                                     bool                                             enable_evm_,
                                     bool                                             enable_post_eq_sinr_) :
     equalizer_factory(std::move(equalizer_factory_)),
+    precoder_factory(std::move(precoder_factory_)),
     demodulation_factory(std::move(demodulation_factory_)),
     prg_factory(std::move(prg_factory_)),
+    max_nof_prb(max_nof_prb_),
     enable_evm(enable_evm_),
     enable_post_eq_sinr(enable_post_eq_sinr_)
   {
     srsran_assert(equalizer_factory, "Invalid equalizer factory.");
+    srsran_assert(precoder_factory, "Invalid transform precoder factory.");
     srsran_assert(demodulation_factory, "Invalid demodulation factory.");
     srsran_assert(prg_factory, "Invalid PRG factory.");
   }
 
 private:
   std::shared_ptr<channel_equalizer_factory>       equalizer_factory;
+  std::shared_ptr<transform_precoder_factory>      precoder_factory;
   std::shared_ptr<channel_modulation_factory>      demodulation_factory;
   std::shared_ptr<pseudo_random_generator_factory> prg_factory;
+  unsigned                                         max_nof_prb;
   bool                                             enable_evm;
   bool                                             enable_post_eq_sinr;
 };
@@ -227,45 +274,63 @@ private:
 class pusch_processor_pool_factory : public pusch_processor_factory
 {
 public:
-  pusch_processor_pool_factory(std::shared_ptr<pusch_processor_factory> factory_, unsigned max_nof_processors_) :
-    factory(std::move(factory_)), max_nof_processors(max_nof_processors_)
+  pusch_processor_pool_factory(pusch_processor_pool_factory_config& config) :
+    regular_factory(config.factory),
+    uci_factory(config.uci_factory),
+    nof_regular_processors(config.nof_regular_processors),
+    nof_uci_processors(config.nof_uci_processors),
+    blocking(config.blocking)
   {
-    srsran_assert(factory, "Invalid PUSCH factory.");
+    srsran_assert(regular_factory, "Invalid PUSCH factory.");
+    srsran_assert(uci_factory, "Invalid PUSCH factory for UCI.");
   }
 
   std::unique_ptr<pusch_processor> create() override
   {
-    if (max_nof_processors <= 1) {
-      return factory->create();
+    if (nof_regular_processors <= 1) {
+      return regular_factory->create();
     }
 
-    std::vector<std::unique_ptr<pusch_processor>> processors(max_nof_processors);
+    std::vector<std::unique_ptr<pusch_processor>> processors(nof_regular_processors);
     for (std::unique_ptr<pusch_processor>& processor : processors) {
-      processor = factory->create();
+      processor = regular_factory->create();
     }
 
-    return std::make_unique<pusch_processor_pool>(processors);
+    std::vector<std::unique_ptr<pusch_processor>> uci_processors(nof_uci_processors);
+    for (std::unique_ptr<pusch_processor>& processor : uci_processors) {
+      processor = uci_factory->create();
+    }
+
+    return std::make_unique<pusch_processor_pool>(std::move(processors), std::move(uci_processors), blocking);
   }
 
   std::unique_ptr<pusch_processor> create(srslog::basic_logger& logger) override
   {
-    if (max_nof_processors <= 1) {
-      return factory->create(logger);
+    if (nof_regular_processors <= 1) {
+      return regular_factory->create(logger);
     }
 
-    std::vector<std::unique_ptr<pusch_processor>> processors(max_nof_processors);
+    std::vector<std::unique_ptr<pusch_processor>> processors(nof_regular_processors);
     for (std::unique_ptr<pusch_processor>& processor : processors) {
-      processor = factory->create(logger);
+      processor = regular_factory->create(logger);
     }
 
-    return std::make_unique<pusch_processor_pool>(processors);
+    std::vector<std::unique_ptr<pusch_processor>> uci_processors(nof_uci_processors);
+    for (std::unique_ptr<pusch_processor>& processor : uci_processors) {
+      processor = uci_factory->create(logger);
+    }
+
+    return std::make_unique<pusch_processor_pool>(std::move(processors), std::move(uci_processors), blocking);
   }
 
-  std::unique_ptr<pusch_pdu_validator> create_validator() override { return factory->create_validator(); }
+  std::unique_ptr<pusch_pdu_validator> create_validator() override { return regular_factory->create_validator(); }
 
 private:
-  std::shared_ptr<pusch_processor_factory> factory;
-  unsigned                                 max_nof_processors;
+  std::shared_ptr<pusch_processor_factory> regular_factory;
+  std::shared_ptr<pusch_processor_factory> uci_factory;
+  unsigned                                 nof_regular_processors;
+  unsigned                                 nof_uci_processors;
+  bool                                     blocking;
 };
 
 class ulsch_demultiplex_factory_sw : public ulsch_demultiplex_factory
@@ -275,6 +340,11 @@ public:
 };
 
 } // namespace
+
+std::shared_ptr<pusch_decoder_factory> srsran::create_pusch_decoder_empty_factory(unsigned nof_prb, unsigned nof_layers)
+{
+  return std::make_shared<pusch_decoder_factory_empty>(nof_prb, nof_layers);
+}
 
 std::shared_ptr<pusch_decoder_factory>
 srsran::create_pusch_decoder_factory_sw(pusch_decoder_factory_sw_configuration config)
@@ -290,14 +360,18 @@ srsran::create_pusch_decoder_factory_hw(const pusch_decoder_factory_hw_configura
 
 std::shared_ptr<pusch_demodulator_factory>
 srsran::create_pusch_demodulator_factory_sw(std::shared_ptr<channel_equalizer_factory>       equalizer_factory,
+                                            std::shared_ptr<transform_precoder_factory>      precoder_factory,
                                             std::shared_ptr<channel_modulation_factory>      demodulation_factory,
                                             std::shared_ptr<pseudo_random_generator_factory> prg_factory,
+                                            unsigned                                         max_nof_prb,
                                             bool                                             enable_evm,
                                             bool                                             enable_post_eq_sinr)
 {
   return std::make_shared<pusch_demodulator_factory_generic>(std::move(equalizer_factory),
+                                                             std::move(precoder_factory),
                                                              std::move(demodulation_factory),
                                                              std::move(prg_factory),
+                                                             max_nof_prb,
                                                              enable_evm,
                                                              enable_post_eq_sinr);
 }
@@ -309,9 +383,9 @@ srsran::create_pusch_processor_factory_sw(pusch_processor_factory_sw_configurati
 }
 
 std::shared_ptr<pusch_processor_factory>
-srsran::create_pusch_processor_pool(std::shared_ptr<pusch_processor_factory> factory, unsigned max_nof_processors)
+srsran::create_pusch_processor_pool(pusch_processor_pool_factory_config& config)
 {
-  return std::make_shared<pusch_processor_pool_factory>(std::move(factory), max_nof_processors);
+  return std::make_shared<pusch_processor_pool_factory>(config);
 }
 
 std::unique_ptr<pusch_processor> pusch_processor_factory::create(srslog::basic_logger& logger)

@@ -45,14 +45,13 @@ private:
   // Initiate UE Configuration in the DU.
   async_task<f1ap_ue_context_update_response> request_du_ue_config();
 
-  // Send RRC container to lower layers.
-  void send_rrc_container();
-
   // Send UE Context Setup Response to CU.
   void send_ue_context_setup_response();
 
   // Send UE Context Setup Failure to CU.
   void send_ue_context_setup_failure();
+
+  async_task<bool> handle_rrc_container();
 
   const char* name() const { return "UE Context Setup"; }
 
@@ -64,8 +63,8 @@ private:
 
   f1ap_du_ue* ue = nullptr;
 
-  optional<f1ap_ue_context_creation_response> du_ue_create_response;
-  f1ap_ue_context_update_response             du_ue_cfg_response;
+  std::optional<f1ap_ue_context_creation_response> du_ue_create_response;
+  f1ap_ue_context_update_response                  du_ue_cfg_response;
 };
 } // namespace srs_du
 } // namespace srsran

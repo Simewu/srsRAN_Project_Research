@@ -33,6 +33,7 @@
 #include "srsran/pdcp/pdcp_config.h"
 #include "srsran/pdcp/pdcp_tx.h"
 #include "srsran/security/security.h"
+#include "srsran/security/security_engine.h"
 #include "srsran/support/sdu_window.h"
 #include "srsran/support/timers.h"
 
@@ -77,13 +78,17 @@ public:
                  pdcp_tx_config                  cfg_,
                  pdcp_tx_lower_notifier&         lower_dn_,
                  pdcp_tx_upper_control_notifier& upper_cn_,
-                 timer_factory                   timers_) :
+                 timer_factory                   ue_dl_timer_factory_,
+                 task_executor&                  ue_dl_executor_,
+                 task_executor&                  crypto_executor_) :
     pdcp_entity_tx_rx_base(rb_id_, cfg_.rb_type, cfg_.rlc_mode, cfg_.sn_size),
     logger("PDCP", {ue_index, rb_id_, "DL"}),
     cfg(cfg_),
     lower_dn(lower_dn_),
     upper_cn(upper_cn_),
-    timers(timers_),
+    ue_dl_timer_factory(ue_dl_timer_factory_),
+    ue_dl_executor(ue_dl_executor_),
+    crypto_executor(crypto_executor_),
     tx_window(create_tx_window(cfg.sn_size))
   {
     // Validate configuration
@@ -100,9 +105,11 @@ public:
       logger.log_error("Invalid DRB config, discard_timer is not configured");
     }
 
-    direction = cfg.direction == pdcp_security_direction::uplink ? security::security_direction::uplink
-                                                                 : security::security_direction::downlink;
     logger.log_info("PDCP configured. {}", cfg);
+
+    // TODO: implement usage of crypto_executor
+    (void)ue_dl_executor;
+    (void)crypto_executor;
   }
 
   /// \brief Triggers re-establishment as specified in TS 38.323, section 5.1.2
@@ -114,10 +121,12 @@ public:
   /*
    * SDU/PDU handlers
    */
-  void handle_sdu(byte_buffer sdu) final;
+  void handle_sdu(byte_buffer sdu) override;
 
   void handle_transmit_notification(uint32_t notif_sn) override;
   void handle_delivery_notification(uint32_t notif_sn) override;
+  void handle_retransmit_notification(uint32_t notif_sn) override;
+  void handle_delivery_retransmitted_notification(uint32_t notif_sn) override;
 
   /// \brief Evaluates a PDCP status report
   ///
@@ -127,7 +136,7 @@ public:
   void handle_status_report(byte_buffer_chain status);
 
   // Status handler interface
-  void on_status_report(byte_buffer_chain status) final { handle_status_report(std::move(status)); }
+  void on_status_report(byte_buffer_chain status) override { handle_status_report(std::move(status)); }
 
   /*
    * Header helpers
@@ -154,56 +163,9 @@ public:
   /*
    * Security configuration
    */
-  void configure_security(security::sec_128_as_config sec_cfg_) final
-  {
-    srsran_assert((is_srb() && sec_cfg_.domain == security::sec_domain::rrc) ||
-                      (is_drb() && sec_cfg_.domain == security::sec_domain::up),
-                  "Invalid sec_domain={} for {} in {}",
-                  sec_cfg.domain,
-                  rb_type,
-                  rb_id);
-    // The 'NULL' integrity protection algorithm (nia0) is used only for SRBs and for the UE in limited service mode,
-    // see TS 33.501 [11] and when used for SRBs, integrity protection is disabled for DRBs. In case the ′NULL'
-    // integrity protection algorithm is used, 'NULL' ciphering algorithm is also used.
-    // Ref: TS 38.331 Sec. 5.3.1.2
-    if ((sec_cfg_.integ_algo == security::integrity_algorithm::nia0) &&
-        (is_drb() || (is_srb() && sec_cfg_.cipher_algo != security::ciphering_algorithm::nea0))) {
-      logger.log_error(
-          "Integrity algorithm NIA0 is only permitted for SRBs configured with NEA0. is_srb={} NIA{} NEA{}",
-          is_srb(),
-          sec_cfg_.integ_algo,
-          sec_cfg_.cipher_algo);
-    }
-
-    sec_cfg = sec_cfg_;
-    logger.log_info(
-        "Security configured: NIA{} NEA{} domain={}", sec_cfg.integ_algo, sec_cfg.cipher_algo, sec_cfg.domain);
-    if (sec_cfg.k_128_int.has_value()) {
-      logger.log_info(sec_cfg.k_128_int.value().data(), 16, "128 K_int");
-    }
-    logger.log_info(sec_cfg.k_128_enc.data(), 16, "128 K_enc");
-  };
-
-  void set_integrity_protection(security::integrity_enabled integrity_enabled_) final
-  {
-    if (integrity_enabled_ == security::integrity_enabled::on) {
-      if (!sec_cfg.k_128_int.has_value()) {
-        logger.log_error("Cannot enable integrity protection: Integrity key is not configured.");
-        return;
-      }
-      if (!sec_cfg.integ_algo.has_value()) {
-        logger.log_error("Cannot enable integrity protection: Integrity algorithm is not configured.");
-        return;
-      }
-    }
-    integrity_enabled = integrity_enabled_;
-    logger.log_info("Set integrity_enabled={}", integrity_enabled);
-  }
-  void set_ciphering(security::ciphering_enabled ciphering_enabled_) final
-  {
-    ciphering_enabled = ciphering_enabled_;
-    logger.log_info("Set ciphering_enabled={}", ciphering_enabled);
-  }
+  void configure_security(security::sec_128_as_config sec_cfg,
+                          security::integrity_enabled integrity_enabled_,
+                          security::ciphering_enabled ciphering_enabled_) override;
 
   /// Sends a status report, as specified in TS 38.323, Sec. 5.4.
   void send_status_report();
@@ -224,22 +186,23 @@ private:
   pdcp_rx_status_provider*        status_provider = nullptr;
   pdcp_tx_lower_notifier&         lower_dn;
   pdcp_tx_upper_control_notifier& upper_cn;
-  timer_factory                   timers;
+  timer_factory                   ue_dl_timer_factory;
 
-  pdcp_tx_state                st        = {};
-  security::security_direction direction = security::security_direction::downlink;
+  task_executor& ue_dl_executor;
+  task_executor& crypto_executor;
 
-  security::sec_128_as_config sec_cfg           = {};
+  pdcp_tx_state st = {};
+
+  std::unique_ptr<security::security_engine_tx> sec_engine;
+
   security::integrity_enabled integrity_enabled = security::integrity_enabled::off;
   security::ciphering_enabled ciphering_enabled = security::ciphering_enabled::off;
 
-  void write_data_pdu_to_lower_layers(uint32_t count, byte_buffer buf);
+  void write_data_pdu_to_lower_layers(uint32_t count, byte_buffer buf, bool is_retx);
   void write_control_pdu_to_lower_layers(byte_buffer buf);
 
   /// Apply ciphering and integrity protection to the payload
   expected<byte_buffer> apply_ciphering_and_integrity_protection(byte_buffer sdu_plus_header, uint32_t count);
-  void                  integrity_generate(security::sec_mac& mac, byte_buffer_view buf, uint32_t count);
-  void                  cipher_encrypt(byte_buffer_view& buf, uint32_t count);
 
   uint32_t notification_count_estimation(uint32_t notification_sn);
 

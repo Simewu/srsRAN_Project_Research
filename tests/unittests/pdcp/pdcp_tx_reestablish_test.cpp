@@ -39,12 +39,12 @@ TEST_P(pdcp_tx_reestablish_test, when_srb_reestablish_then_pdus_dropped)
   // Set state of PDCP entiy
   pdcp_tx_state st = {0};
   pdcp_tx->set_state(st);
-  pdcp_tx->configure_security(sec_cfg);
+  pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::off);
 
   // Write 5 SDU
   int n_pdus = 5;
   for (int i = 0; i < n_pdus; i++) {
-    byte_buffer sdu = {sdu1};
+    byte_buffer sdu = byte_buffer::create(sdu1).value();
     pdcp_tx->handle_sdu(std::move(sdu));
   }
 
@@ -64,12 +64,12 @@ TEST_P(pdcp_tx_reestablish_test, when_drb_um_reestablish_then_pdus_and_discard_t
   // Set state of PDCP entiy
   pdcp_tx_state st = {0};
   pdcp_tx->set_state(st);
-  pdcp_tx->configure_security(sec_cfg);
+  pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::off);
 
   // Write 5 SDU
   int n_pdus = 5;
   for (int i = 0; i < n_pdus; i++) {
-    byte_buffer sdu = {sdu1};
+    byte_buffer sdu = byte_buffer::create(sdu1).value();
     pdcp_tx->handle_sdu(std::move(sdu));
   }
   ASSERT_EQ(5, pdcp_tx->nof_discard_timers());
@@ -88,12 +88,12 @@ TEST_P(pdcp_tx_reestablish_test, when_drb_am_reestablish_then_pdus_retx)
   // Set state of PDCP entiy
   pdcp_tx_state st = {0};
   pdcp_tx->set_state(st);
-  pdcp_tx->configure_security(sec_cfg);
+  pdcp_tx->configure_security(sec_cfg, security::integrity_enabled::on, security::ciphering_enabled::off);
 
   // Write 5 SDU
   int n_pdus = 5;
   for (int i = 0; i < n_pdus; i++) {
-    byte_buffer sdu = {sdu1};
+    byte_buffer sdu = byte_buffer::create(sdu1).value();
     pdcp_tx->handle_sdu(std::move(sdu));
   }
   tick_all(5);
@@ -119,7 +119,8 @@ TEST_P(pdcp_tx_reestablish_test, when_drb_am_reestablish_then_pdus_retx)
   }
 
   pdcp_tx->reestablish(sec_cfg);
-  ASSERT_EQ(8, test_frame.pdu_queue.size()); // SN=2, 3 and 4 RETXed
+  ASSERT_EQ(5, test_frame.pdu_queue.size());  // unchanged
+  ASSERT_EQ(3, test_frame.retx_queue.size()); // SN=2, 3 and 4 RETXed
 
   // Check if discard timer was not reset.
   ASSERT_EQ(3, pdcp_tx->nof_discard_timers());

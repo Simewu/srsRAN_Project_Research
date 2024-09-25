@@ -41,8 +41,44 @@
 
 using namespace srsran;
 
+static std::string eal_arguments = "pdsch_processor_vectortest";
 #ifdef HWACC_PDSCH_ENABLED
-static bool skip_hwacc_test = false;
+static bool                                     skip_hwacc_test   = false;
+static std::unique_ptr<dpdk::dpdk_eal>          dpdk_interface    = nullptr;
+static std::unique_ptr<dpdk::bbdev_acc_factory> bbdev_acc_factory = nullptr;
+
+// Separates EAL and non-EAL arguments.
+// The function assumes that 'eal_arg' flags the start of the EAL arguments and that no more non-EAL arguments follow.
+static std::string capture_eal_args(int* argc, char*** argv)
+{
+  // Searchs for the EAL args (if any), flagged by 'eal_args', while removing all the rest (except argv[0]).
+  bool        eal_found = false;
+  char**      mod_argv  = *argv;
+  std::string eal_argv  = {mod_argv[0]};
+  int         opt_ind   = *argc;
+  for (int j = 1; j < opt_ind; ++j) {
+    // Search for the 'eal_args' flag (if any).
+    if (!eal_found) {
+      if (strcmp(mod_argv[j], "eal_args") == 0) {
+        // 'eal_args' flag found.
+        eal_found = true;
+        // Remove all main app arguments starting from that point, while copying them to the EAL argument string.
+        mod_argv[j] = NULL;
+        for (int k = j + 1; k < opt_ind; ++k) {
+          eal_argv += " ";
+          eal_argv += mod_argv[k];
+          mod_argv[k] = NULL;
+        }
+        *argc = j;
+      }
+    }
+  }
+  *argv = mod_argv;
+
+  fmt::print("eal_arg={}\n", eal_argv);
+
+  return eal_argv;
+}
 #endif // HWACC_PDSCH_ENABLED
 
 namespace srsran {
@@ -83,27 +119,36 @@ private:
     return create_pdsch_encoder_factory_sw(encoder_factory_config);
   }
 
-  static std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory> create_hw_accelerator_pdsch_enc_factory()
+  static std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory>
+  create_hw_accelerator_pdsch_enc_factory(const std::string& eal_arguments)
   {
 #ifdef HWACC_PDSCH_ENABLED
-    // Hardcoded stdout and error logging.
+    //  Hardcoded stdout and error logging.
     srslog::sink* log_sink = srslog::create_stdout_sink();
     srslog::set_default_sink(*log_sink);
     srslog::init();
     srslog::basic_logger& logger = srslog::fetch_basic_logger("HAL", false);
-    logger.set_level(srslog::str_to_basic_level("error"));
+    logger.set_level(srslog::basic_levels::error);
 
     // Pointer to a dpdk-based hardware-accelerator interface.
-    static std::unique_ptr<dpdk::dpdk_eal> dpdk_interface = nullptr;
     if (!dpdk_interface && !skip_hwacc_test) {
       // :TODO: Enable passing EAL arguments.
-      dpdk_interface = dpdk::create_dpdk_eal("pdsch_processor_vectortest", logger);
+      dpdk_interface = dpdk::create_dpdk_eal(eal_arguments, logger);
       if (!dpdk_interface) {
         skip_hwacc_test = true;
         return nullptr;
       }
     } else if (skip_hwacc_test) {
       return nullptr;
+    }
+
+    // Create a bbdev accelerator factory.
+    if (!bbdev_acc_factory) {
+      bbdev_acc_factory = srsran::dpdk::create_bbdev_acc_factory("srs");
+      if (!bbdev_acc_factory || skip_hwacc_test) {
+        skip_hwacc_test = true;
+        return nullptr;
+      }
     }
 
     // Intefacing to the bbdev-based hardware-accelerator.
@@ -113,26 +158,30 @@ private:
     bbdev_config.nof_ldpc_dec_lcores                   = 0;
     bbdev_config.nof_fft_lcores                        = 0;
     bbdev_config.nof_mbuf                              = static_cast<unsigned>(pow2(log2_ceil(MAX_NOF_SEGMENTS)));
-    std::shared_ptr<dpdk::bbdev_acc> bbdev_accelerator = create_bbdev_acc(bbdev_config, logger);
+    std::shared_ptr<dpdk::bbdev_acc> bbdev_accelerator = bbdev_acc_factory->create(bbdev_config, logger);
     if (!bbdev_accelerator || skip_hwacc_test) {
       skip_hwacc_test = true;
       return nullptr;
     }
 
-    // Set the hardware-accelerator configuration.
-    hw_accelerator_pdsch_enc_configuration hw_encoder_config;
+    // Set the PDSCH encoder hardware-accelerator factory configuration for the ACC100.
+    hal::bbdev_hwacc_pdsch_enc_factory_configuration hw_encoder_config;
     hw_encoder_config.acc_type          = "acc100";
     hw_encoder_config.bbdev_accelerator = bbdev_accelerator;
+    hw_encoder_config.cb_mode           = false;
+    hw_encoder_config.max_tb_size       = RTE_BBDEV_LDPC_E_MAX_MBUF;
+    hw_encoder_config.dedicated_queue   = true;
 
     // ACC100 hardware-accelerator implementation.
-    return hal::create_hw_accelerator_pdsch_enc_factory(hw_encoder_config);
+    return srsran::hal::create_bbdev_pdsch_enc_acc_factory(hw_encoder_config, "srs");
 #else  // HWACC_PDSCH_ENABLED
     return nullptr;
 #endif // HWACC_PDSCH_ENABLED
   }
 
   static std::shared_ptr<pdsch_encoder_factory>
-  create_acc100_pdsch_encoder_factory(std::shared_ptr<crc_calculator_factory> crc_calculator_factory)
+  create_acc100_pdsch_encoder_factory(std::shared_ptr<crc_calculator_factory> crc_calculator_factory,
+                                      const std::string&                      eal_arguments)
   {
     std::shared_ptr<ldpc_segmenter_tx_factory> segmenter_factory =
         create_ldpc_segmenter_tx_factory_sw(crc_calculator_factory);
@@ -141,17 +190,13 @@ private:
     }
 
     std::shared_ptr<hal::hw_accelerator_pdsch_enc_factory> hw_encoder_factory =
-        create_hw_accelerator_pdsch_enc_factory();
+        create_hw_accelerator_pdsch_enc_factory(eal_arguments);
     if (!hw_encoder_factory) {
       return nullptr;
     }
 
     // Set the hardware-accelerated PDSCH encoder configuration.
     pdsch_encoder_factory_hw_configuration encoder_hw_factory_config;
-#ifdef HWACC_PDSCH_ENABLED
-    encoder_hw_factory_config.cb_mode     = false;
-    encoder_hw_factory_config.max_tb_size = RTE_BBDEV_LDPC_E_MAX_MBUF;
-#endif // HWACC_PDSCH_ENABLED
     encoder_hw_factory_config.crc_factory        = crc_calculator_factory;
     encoder_hw_factory_config.segmenter_factory  = segmenter_factory;
     encoder_hw_factory_config.hw_encoder_factory = hw_encoder_factory;
@@ -160,20 +205,22 @@ private:
 
   static std::shared_ptr<pdsch_encoder_factory>
   create_pdsch_encoder_factory(std::shared_ptr<crc_calculator_factory> crc_calculator_factory,
-                               const std::string&                      encoder_type)
+                               const std::string&                      encoder_type,
+                               const std::string&                      eal_arguments)
   {
     if (encoder_type == "generic") {
       return create_generic_pdsch_encoder_factory(crc_calculator_factory);
     }
 
     if (encoder_type == "acc100") {
-      return create_acc100_pdsch_encoder_factory(crc_calculator_factory);
+      return create_acc100_pdsch_encoder_factory(crc_calculator_factory, eal_arguments);
     }
 
     return nullptr;
   }
 
-  std::shared_ptr<pdsch_processor_factory> create_pdsch_processor_factory(const std::string& factory_type)
+  std::shared_ptr<pdsch_processor_factory> create_pdsch_processor_factory(const std::string& factory_type,
+                                                                          const std::string& eal_arguments)
   {
     std::string encoder_type = "generic";
 #ifdef HWACC_PDSCH_ENABLED
@@ -204,7 +251,7 @@ private:
     }
 
     std::shared_ptr<pdsch_encoder_factory> pdsch_encoder_factory =
-        create_pdsch_encoder_factory(crc_calc_factory, encoder_type);
+        create_pdsch_encoder_factory(crc_calc_factory, encoder_type, eal_arguments);
     if (!pdsch_encoder_factory) {
       return nullptr;
     }
@@ -231,13 +278,13 @@ private:
       return nullptr;
     }
 
-    if (factory_type == "generic") {
+    if (factory_type.find("generic") != std::string::npos) {
       return create_pdsch_processor_factory_sw(pdsch_encoder_factory, pdsch_modulator_factory, dmrs_pdsch_factory);
     }
 
     if (factory_type == "concurrent") {
       worker_pool = std::make_unique<task_worker_pool<concurrent_queue_policy::locking_mpmc>>(
-          NOF_CONCURRENT_THREADS, 128, "pdsch_proc");
+          "pdsch_proc", NOF_CONCURRENT_THREADS, 128);
       executor = std::make_unique<task_worker_pool_executor<concurrent_queue_policy::locking_mpmc>>(*worker_pool);
 
       return create_pdsch_concurrent_processor_factory_sw(crc_calc_factory,
@@ -277,7 +324,8 @@ protected:
     const std::string&          factory_type = std::get<0>(param);
 
     // Create PDSCH processor factory.
-    std::shared_ptr<pdsch_processor_factory> pdsch_proc_factory = create_pdsch_processor_factory(factory_type);
+    std::shared_ptr<pdsch_processor_factory> pdsch_proc_factory =
+        create_pdsch_processor_factory(factory_type, eal_arguments);
 #ifdef HWACC_PDSCH_ENABLED
     if ((factory_type.find("acc100") != std::string::npos) && skip_hwacc_test) {
       GTEST_SKIP() << "[WARNING] ACC100 not found. Skipping test.";
@@ -335,8 +383,10 @@ TEST_P(PdschProcessorFixture, PdschProcessorVectortest)
   // Waits for the processor to finish.
   notifier_spy.wait_for_finished();
 
+  // Tolerance: max BF16 error times sqrt(2), since we are taking the modulus.
+  constexpr float tolerance = M_SQRT2f32 / 256.0;
   // Assert results.
-  grid.assert_entries(test_case.grid_expected.read());
+  grid.assert_entries(test_case.grid_expected.read(), tolerance);
 }
 
 // Creates test suite that combines all possible parameters.
@@ -351,3 +401,16 @@ INSTANTIATE_TEST_SUITE_P(PdschProcessorVectortest,
 } // namespace
 
 } // namespace srsran
+
+int main(int argc, char** argv)
+{
+#ifdef HWACC_PDSCH_ENABLED
+  if (argc > 1) {
+    // Separate EAL and non-EAL arguments.
+    eal_arguments = capture_eal_args(&argc, &argv);
+  }
+#endif // HWACC_PDSCH_ENABLED
+
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}
